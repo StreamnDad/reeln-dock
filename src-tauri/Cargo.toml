@@ -1,0 +1,26 @@
+[package]
+name = "reeln-dock"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+description = "Cross-platform desktop app for the reeln ecosystem"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+reeln-config = { path = "../../reeln-core/crates/reeln-config" }
+reeln-state = { path = "../../reeln-core/crates/reeln-state" }
+reeln-sport = { path = "../../reeln-core/crates/reeln-sport" }
+reeln-media = { path = "../../reeln-core/crates/reeln-media" }
+reeln-overlay = { path = "../../reeln-core/crates/reeln-overlay" }
+reeln-plugin = { path = "../../reeln-core/crates/reeln-plugin" }
+tokio = { version = "1", features = ["rt", "sync"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"

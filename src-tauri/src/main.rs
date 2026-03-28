@@ -1,0 +1,90 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod commands;
+mod models;
+mod orchestration;
+mod state;
+
+use std::sync::{Arc, Mutex};
+
+use reeln_media::LibavBackend;
+use reeln_sport::SportRegistry;
+use tauri::Manager;
+
+use state::{AppState, DockSettings};
+
+fn main() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
+        .setup(|app| {
+            let app_data_dir = app
+                .path()
+                .app_data_dir()
+                .expect("failed to resolve app data dir");
+
+            let dock_settings = DockSettings::load(&app_data_dir).unwrap_or_default();
+
+            app.manage(AppState {
+                config: Mutex::new(None),
+                sport_registry: Mutex::new(SportRegistry::default()),
+                dock_settings: Mutex::new(dock_settings),
+                app_data_dir,
+                media_backend: Arc::new(LibavBackend::new()),
+            });
+
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            // Config
+            commands::config::load_dock_settings,
+            commands::config::save_dock_settings,
+            commands::config::load_config_from_path,
+            commands::config::get_config_path,
+            // Games (read)
+            commands::games::list_games,
+            commands::games::get_game_state,
+            commands::games::set_game_tournament,
+            commands::games::update_game_event,
+            // Games (execution)
+            commands::games::init_game,
+            commands::games::process_segment,
+            commands::games::merge_highlights,
+            commands::games::finish_game,
+            // Sports
+            commands::sports::list_sports,
+            // Media
+            commands::media::probe_clip,
+            commands::media::open_in_finder,
+            // Render
+            commands::render::render_short,
+            commands::render::render_preview,
+            commands::render::render_reel,
+            commands::render::list_render_profiles,
+            // Teams
+            commands::teams::list_team_levels,
+            commands::teams::list_team_profiles,
+            commands::teams::save_team_profile,
+            // Prompts
+            commands::prompts::list_prompt_templates,
+            commands::prompts::get_prompt_template,
+            commands::prompts::preview_prompt,
+            commands::prompts::save_prompt_template,
+            // Plugins
+            commands::plugins::list_config_profiles,
+            commands::plugins::list_plugins_for_profile,
+            commands::plugins::toggle_plugin_in_config,
+            commands::plugins::update_plugin_in_config,
+            commands::plugins::fetch_plugin_registry,
+            commands::plugins::add_plugin_to_config,
+            commands::plugins::remove_plugin_from_config,
+            commands::plugins::create_config_profile,
+            commands::plugins::get_version_info,
+            // Tournaments
+            commands::tournaments::list_tournament_metadata,
+            commands::tournaments::set_tournament_archived,
+            commands::tournaments::update_tournament_metadata,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}

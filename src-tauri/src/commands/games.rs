@@ -1,0 +1,183 @@
+use std::path::{Path, PathBuf};
+
+use tauri::{AppHandle, State};
+
+use crate::models::GameSummary;
+use crate::orchestration::{game_ops, progress::ProgressReporter};
+use crate::state::AppState;
+
+#[tauri::command]
+pub fn update_game_event(
+    game_dir: String,
+    event_id: String,
+    field: String,
+    value: String,
+) -> Result<reeln_state::GameState, String> {
+    let path = Path::new(&game_dir);
+    let mut state = reeln_state::load_game_state(path).map_err(|e| e.to_string())?;
+
+    let event = state
+        .events
+        .iter_mut()
+        .find(|e| e.id == event_id)
+        .ok_or_else(|| format!("Event {} not found", event_id))?;
+
+    match field.as_str() {
+        "clip" => event.clip = value,
+        "event_type" => event.event_type = value,
+        "player" => event.player = value,
+        other => return Err(format!("Unknown field: {}", other)),
+    }
+
+    reeln_state::save_game_state(&state, path).map_err(|e| e.to_string())?;
+    Ok(state)
+}
+
+#[tauri::command]
+pub fn list_games(output_dir: String) -> Result<Vec<GameSummary>, String> {
+    let base = Path::new(&output_dir);
+    if !base.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut games = Vec::new();
+    let entries = std::fs::read_dir(base).map_err(|e| e.to_string())?;
+
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if path.is_dir() {
+            let game_json = path.join("game.json");
+            if game_json.exists() {
+                match reeln_state::load_game_state(&path) {
+                    Ok(state) => games.push(GameSummary {
+                        dir_path: path.display().to_string(),
+                        state,
+                    }),
+                    Err(_) => continue,
+                }
+            }
+        }
+    }
+
+    Ok(games)
+}
+
+#[tauri::command]
+pub fn get_game_state(game_dir: String) -> Result<reeln_state::GameState, String> {
+    let path = Path::new(&game_dir);
+    reeln_state::load_game_state(path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_game_tournament(game_dir: String, tournament: String) -> Result<reeln_state::GameState, String> {
+    let path = Path::new(&game_dir);
+    let mut state = reeln_state::load_game_state(path).map_err(|e| e.to_string())?;
+    state.game_info.tournament = tournament;
+    reeln_state::save_game_state(&state, path).map_err(|e| e.to_string())?;
+    Ok(state)
+}
+
+#[tauri::command]
+pub fn init_game(
+    state: State<'_, AppState>,
+    sport: String,
+    home_team: String,
+    away_team: String,
+    date: String,
+    venue: Option<String>,
+    game_time: Option<String>,
+    level: Option<String>,
+    tournament: Option<String>,
+    period_length: Option<u32>,
+) -> Result<GameSummary, String> {
+    let config = state
+        .config
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone()
+        .ok_or_else(|| "Config not loaded".to_string())?;
+    let registry = state.sport_registry.lock().map_err(|e| e.to_string())?;
+
+    let params = game_ops::InitGameParams {
+        sport,
+        home_team,
+        away_team,
+        date,
+        venue,
+        game_time,
+        level,
+        tournament,
+        period_length,
+    };
+
+    let (game_dir, game_state) = game_ops::init_game(&config, &registry, params)?;
+
+    Ok(GameSummary {
+        dir_path: game_dir.display().to_string(),
+        state: game_state,
+    })
+}
+
+#[tauri::command]
+pub async fn process_segment(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    game_dir: String,
+    segment_number: u32,
+) -> Result<serde_json::Value, String> {
+    let backend = state.media_backend.clone();
+    let config = state
+        .config
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone()
+        .ok_or_else(|| "Config not loaded".to_string())?;
+
+    let job_id = uuid::Uuid::new_v4().to_string();
+    let reporter = ProgressReporter::new(app, job_id);
+    let game_path = PathBuf::from(&game_dir);
+
+    let result = tokio::task::spawn_blocking(move || {
+        game_ops::process_segment(&backend, &config, &game_path, segment_number, Some(&reporter))
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let game_state = result?;
+    serde_json::to_value(&game_state).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn merge_highlights(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    game_dir: String,
+) -> Result<serde_json::Value, String> {
+    let backend = state.media_backend.clone();
+    let config = state
+        .config
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone()
+        .ok_or_else(|| "Config not loaded".to_string())?;
+
+    let job_id = uuid::Uuid::new_v4().to_string();
+    let reporter = ProgressReporter::new(app, job_id);
+    let game_path = PathBuf::from(&game_dir);
+
+    let result = tokio::task::spawn_blocking(move || {
+        game_ops::merge_highlights(&backend, &config, &game_path, Some(&reporter))
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let game_state = result?;
+    serde_json::to_value(&game_state).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn finish_game(game_dir: String) -> Result<serde_json::Value, String> {
+    let game_state = game_ops::finish_game(Path::new(&game_dir))?;
+    serde_json::to_value(&game_state).map_err(|e| e.to_string())
+}
