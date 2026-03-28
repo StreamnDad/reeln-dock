@@ -12,7 +12,7 @@
   import { setGames } from "$lib/stores/games";
   import type { GameSummary } from "$lib/types/game";
   import type { TeamProfile } from "$lib/types/team";
-  import { listGames, setGameTournament } from "$lib/ipc/games";
+  import { listGames, setGameTournament, getGameState } from "$lib/ipc/games";
   import { listTeamLevels, listTeamProfiles } from "$lib/ipc/teams";
   import { moveDrag, endDrag, cancelDrag } from "$lib/stores/drag.svelte";
   import { initJobListener } from "$lib/stores/jobs.svelte";
@@ -40,6 +40,19 @@
   let teamsByLevel = $state<Record<string, TeamProfile[]>>({});
 
   function setView(v: View) { view = v; sidebarTab = "games"; selectedGameDir = null; selectedEventId_ = null; }
+
+  /** Select a game and reload its state from disk (picks up CLI changes). */
+  async function selectGame(dirPath: string | null) {
+    if (dirPath === selectedGameDir) { selectedGameDir = null; selectedEventId_ = null; return; }
+    selectedEventId_ = null;
+    if (dirPath) {
+      try {
+        const freshState = await getGameState(dirPath);
+        gamesData = gamesData.map(g => g.dir_path === dirPath ? { ...g, state: freshState } : g);
+      } catch { /* use cached state */ }
+    }
+    selectedGameDir = dirPath;
+  }
   function handleUpdateGame(dirPath: string, updater: (g: GameSummary) => GameSummary) {
     gamesData = gamesData.map(g => g.dir_path === dirPath ? updater(g) : g);
     setGames(gamesData);
@@ -163,7 +176,7 @@
                         class="flex items-center gap-2 w-full px-2 py-1.5 rounded text-sm text-left transition-colors"
                         class:bg-primary={selectedGameDir === game.dir_path}
                         class:hover:bg-surface-hover={selectedGameDir !== game.dir_path}
-                        onclick={() => { selectedGameDir = selectedGameDir === game.dir_path ? null : game.dir_path; selectedEventId_ = null; }}
+                        onclick={() => selectGame(game.dir_path)}
                       >
                         <span class="w-2 h-2 rounded-full shrink-0" class:bg-green-500={status === "done"} class:bg-secondary={status === "active"} class:bg-text-muted={status === "new"}></span>
                         <TeamLogo teamName={info.home_team} size="xs" />
@@ -259,6 +272,7 @@
                 <ClipReviewPanel
                   event={selectedEvent}
                   {game}
+                  iterationMappings={config?.iterations?.mappings ?? {}}
                   onClose={() => { selectedEventId_ = null; }}
                   onUpdateGame={handleUpdateGame}
                 />
@@ -283,7 +297,7 @@
                   {@const info = game.state.game_info}
                   <button
                     class="p-4 bg-surface rounded-lg border border-border hover:border-secondary transition-colors text-left"
-                    onclick={() => selectedGameDir = game.dir_path}
+                    onclick={() => selectGame(game.dir_path)}
                   >
                     <div class="font-medium">{info.home_team} vs {info.away_team}</div>
                     <div class="text-sm text-text-muted mt-1">{info.date}</div>
@@ -314,7 +328,7 @@
       onclose={() => showNewGame = false}
       allGames={gamesData}
       onGameCreated={(game) => { gamesData = [...gamesData, game]; setGames(gamesData); }}
-      onSelectGame={(dir) => { selectedGameDir = dir; showNewGame = false; }}
+      onSelectGame={(dir) => { selectGame(dir); showNewGame = false; }}
     />
   {/if}
 </div>

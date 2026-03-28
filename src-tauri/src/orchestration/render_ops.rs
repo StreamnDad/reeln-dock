@@ -8,6 +8,50 @@ use reeln_state::RenderEntry;
 
 use super::progress::ProgressReporter;
 
+/// Optional overrides for render profile parameters.
+#[derive(Debug, Clone, Default)]
+pub struct RenderOverrides {
+    pub crop_mode: Option<String>,
+    pub scale: Option<f64>,
+    pub speed: Option<f64>,
+    pub smart: Option<bool>,
+    pub anchor_x: Option<f64>,
+    pub anchor_y: Option<f64>,
+    pub pad_color: Option<String>,
+}
+
+/// A single item in a render iteration queue.
+#[derive(Debug, Clone)]
+pub struct IterationItem {
+    pub profile_name: String,
+    pub overrides: Option<RenderOverrides>,
+}
+
+/// Apply overrides onto a cloned profile.
+fn apply_overrides(profile: &mut RenderProfile, overrides: &RenderOverrides) {
+    if let Some(ref cm) = overrides.crop_mode {
+        profile.crop_mode = Some(cm.clone());
+    }
+    if let Some(s) = overrides.scale {
+        profile.scale = Some(s);
+    }
+    if let Some(sp) = overrides.speed {
+        profile.speed = Some(sp);
+    }
+    if let Some(sm) = overrides.smart {
+        profile.smart = Some(sm);
+    }
+    if let Some(ax) = overrides.anchor_x {
+        profile.anchor_x = Some(ax);
+    }
+    if let Some(ay) = overrides.anchor_y {
+        profile.anchor_y = Some(ay);
+    }
+    if let Some(ref pc) = overrides.pad_color {
+        profile.pad_color = Some(pc.clone());
+    }
+}
+
 /// Build a `RenderPlan` from a `RenderProfile` and config defaults.
 fn build_render_plan(
     input: &Path,
@@ -39,16 +83,12 @@ fn build_render_plan(
                 filters.push(format!("crop={w}:{h}"));
             }
             Some("pad") => {
-                let pad_color = profile
-                    .pad_color
-                    .as_deref()
-                    .unwrap_or("black");
+                let pad_color = profile.pad_color.as_deref().unwrap_or("black");
                 filters.push(format!(
                     "scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color={pad_color}"
                 ));
             }
             _ => {
-                // Default: scale to fit
                 filters.push(format!("scale={w}:{h}"));
             }
         }
@@ -87,7 +127,7 @@ fn build_render_plan(
     }
 }
 
-/// Render a short from a clip using a named render profile.
+/// Render a short from a clip using a named render profile, with optional overrides.
 pub fn render_short(
     backend: &Arc<dyn MediaBackend>,
     config: &AppConfig,
@@ -95,12 +135,18 @@ pub fn render_short(
     output_dir: &Path,
     profile_name: &str,
     event_metadata: Option<&HashMap<String, String>>,
+    overrides: Option<&RenderOverrides>,
     reporter: Option<&ProgressReporter>,
 ) -> Result<RenderEntry, String> {
-    let profile = config
+    let base_profile = config
         .render_profiles
         .get(profile_name)
         .ok_or_else(|| format!("Render profile '{}' not found", profile_name))?;
+
+    let mut profile = base_profile.clone();
+    if let Some(ovr) = overrides {
+        apply_overrides(&mut profile, ovr);
+    }
 
     if let Some(r) = reporter {
         r.report("render", 0.0, &format!("Rendering with profile '{profile_name}'"));
@@ -115,7 +161,7 @@ pub fn render_short(
 
     std::fs::create_dir_all(output_dir).map_err(|e| e.to_string())?;
 
-    let plan = build_render_plan(input_clip, &output, profile, config);
+    let plan = build_render_plan(input_clip, &output, &profile, config);
 
     if let Some(r) = reporter {
         r.report("render", 0.2, "Encoding video");
@@ -154,7 +200,6 @@ pub fn render_short(
             )
             .map_err(|e| e.to_string())?;
 
-            // Clean up intermediate files
             let _ = std::fs::remove_file(&result.output);
             let _ = std::fs::remove_file(&overlay_png);
 
@@ -179,6 +224,107 @@ pub fn render_short(
         rendered_at: chrono::Utc::now().to_rfc3339(),
         event_id: String::new(),
     })
+}
+
+/// Render multiple profiles for one clip (iteration), optionally concatenating.
+pub fn render_iteration(
+    backend: &Arc<dyn MediaBackend>,
+    config: &AppConfig,
+    input_clip: &Path,
+    output_dir: &Path,
+    items: &[IterationItem],
+    concat_output: bool,
+    reporter: Option<&ProgressReporter>,
+) -> Result<Vec<RenderEntry>, String> {
+    if items.is_empty() {
+        return Err("No iteration items provided".to_string());
+    }
+
+    std::fs::create_dir_all(output_dir).map_err(|e| e.to_string())?;
+
+    let total = items.len() as f64;
+    let mut entries = Vec::new();
+
+    for (i, item) in items.iter().enumerate() {
+        let progress_base = i as f64 / total;
+        let progress_end = (i + 1) as f64 / total;
+
+        if let Some(r) = reporter {
+            r.report(
+                "iteration",
+                progress_base,
+                &format!("Rendering {}/{} ({})", i + 1, items.len(), item.profile_name),
+            );
+        }
+
+        let entry = render_short(
+            backend,
+            config,
+            input_clip,
+            output_dir,
+            &item.profile_name,
+            None,
+            item.overrides.as_ref(),
+            None, // don't report sub-progress
+        )?;
+
+        entries.push(entry);
+
+        if let Some(r) = reporter {
+            r.report("iteration", progress_end, &format!("Completed {}", item.profile_name));
+        }
+    }
+
+    // Optionally concatenate all renders into one file
+    if concat_output && entries.len() > 1 {
+        if let Some(r) = reporter {
+            r.report("concat", 0.9, "Concatenating iterations");
+        }
+
+        let short_paths: Vec<PathBuf> = entries.iter().map(|e| PathBuf::from(&e.output)).collect();
+        let refs: Vec<&Path> = short_paths.iter().map(|p| p.as_path()).collect();
+
+        let stem = input_clip
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("clip");
+        let concat_path = output_dir.join(format!("{stem}_iteration.mp4"));
+
+        let opts = ConcatOptions {
+            copy: false, // re-encode for smooth transitions
+            video_codec: config.video.codec.clone(),
+            crf: config.video.crf,
+            audio_codec: config.video.audio_codec.clone(),
+            audio_rate: 48000,
+        };
+
+        backend
+            .concat(&refs, &concat_path, &opts)
+            .map_err(|e| e.to_string())?;
+
+        // Clean up individual renders
+        for path in &short_paths {
+            let _ = std::fs::remove_file(path);
+        }
+
+        // Return a single entry for the concatenated output
+        let profile_names: Vec<&str> = items.iter().map(|i| i.profile_name.as_str()).collect();
+        entries = vec![RenderEntry {
+            input: input_clip.display().to_string(),
+            output: concat_path.display().to_string(),
+            segment_number: 0,
+            format: profile_names.join("+"),
+            crop_mode: String::new(),
+            rendered_at: chrono::Utc::now().to_rfc3339(),
+            event_id: String::new(),
+        }];
+    }
+
+    if let Some(r) = reporter {
+        r.report("done", 1.0, "Iteration complete");
+    }
+
+    Ok(entries)
 }
 
 /// Render a low-res preview of a clip.
@@ -255,7 +401,6 @@ pub fn render_reel(
         r.report("done", 1.0, "Reel complete");
     }
 
-    // Probe output for duration
     let info = backend.probe(output).map_err(|e| e.to_string())?;
 
     Ok(RenderResult {

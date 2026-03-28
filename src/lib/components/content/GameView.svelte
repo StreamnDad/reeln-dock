@@ -199,16 +199,18 @@
         </div>
       {/if}
       <div class="flex gap-2 flex-wrap">
-        <!-- Process Segment buttons: one per unprocessed segment -->
-        {#each Array.from({ length: 9 }, (_, i) => i + 1).filter((n) => !gs.segments_processed.includes(n)).slice(0, 4) as segNum}
+        <!-- Process next segment button: only the next unprocessed one -->
+        {@const maxProcessed = gs.segments_processed.length > 0 ? Math.max(...gs.segments_processed) : 0}
+        {@const nextSeg = maxProcessed + 1}
+        {#if !gs.finished}
           <button
             class="px-3 py-1.5 bg-surface border border-border rounded-lg text-sm hover:bg-surface-hover transition-colors disabled:opacity-50"
             disabled={actionLoading !== null}
-            onclick={() => handleProcessSegment(segNum)}
+            onclick={() => handleProcessSegment(nextSeg)}
           >
-            {actionLoading === `process-${segNum}` ? "Processing..." : `Process Seg ${segNum}`}
+            {actionLoading === `process-${nextSeg}` ? "Processing..." : `Process Segment ${nextSeg}`}
           </button>
-        {/each}
+        {/if}
 
         {#if gs.segments_processed.length > 0 && !gs.highlighted}
           <button

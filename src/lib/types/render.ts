@@ -5,12 +5,28 @@ export interface ProgressEvent {
   message: string;
 }
 
+export interface RenderOverrides {
+  crop_mode?: string;
+  scale?: number;
+  speed?: number;
+  smart?: boolean;
+  anchor_x?: number;
+  anchor_y?: number;
+  pad_color?: string;
+}
+
+export interface IterationItem {
+  profile_name: string;
+  overrides?: RenderOverrides;
+}
+
 export interface RenderShortRequest {
   input_clip: string;
   output_dir: string;
   profile_name: string;
   event_id?: string;
   game_dir?: string;
+  overrides?: RenderOverrides;
 }
 
 export interface RenderReelRequest {

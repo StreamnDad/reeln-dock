@@ -1,9 +1,29 @@
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
 use crate::orchestration::{progress::ProgressReporter, render_ops};
 use crate::state::AppState;
+
+/// Optional overrides for render profile parameters.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RenderOverrides {
+    pub crop_mode: Option<String>,
+    pub scale: Option<f64>,
+    pub speed: Option<f64>,
+    pub smart: Option<bool>,
+    pub anchor_x: Option<f64>,
+    pub anchor_y: Option<f64>,
+    pub pad_color: Option<String>,
+}
+
+/// A single item in a render iteration queue.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IterationItem {
+    pub profile_name: String,
+    pub overrides: Option<RenderOverrides>,
+}
 
 #[tauri::command]
 pub async fn render_short(
@@ -14,6 +34,7 @@ pub async fn render_short(
     profile_name: String,
     event_id: Option<String>,
     game_dir: Option<String>,
+    overrides: Option<RenderOverrides>,
 ) -> Result<serde_json::Value, String> {
     let backend = state.media_backend.clone();
     let config = state
@@ -31,6 +52,15 @@ pub async fn render_short(
     let profile = profile_name.clone();
     let eid = event_id.clone();
     let gdir = game_dir.clone();
+    let ovr = overrides.map(|o| render_ops::RenderOverrides {
+        crop_mode: o.crop_mode,
+        scale: o.scale,
+        speed: o.speed,
+        smart: o.smart,
+        anchor_x: o.anchor_x,
+        anchor_y: o.anchor_y,
+        pad_color: o.pad_color,
+    });
 
     let result = tokio::task::spawn_blocking(move || {
         render_ops::render_short(
@@ -40,6 +70,7 @@ pub async fn render_short(
             &out_dir,
             &profile,
             None,
+            ovr.as_ref(),
             Some(&reporter),
         )
     })
@@ -48,7 +79,6 @@ pub async fn render_short(
 
     let mut entry = result?;
 
-    // If event_id was provided, record the render in game state
     if let Some(ref eid) = eid {
         entry.event_id = eid.clone();
     }
@@ -62,6 +92,98 @@ pub async fn render_short(
     }
 
     serde_json::to_value(&entry).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn render_iteration(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    input_clip: String,
+    output_dir: String,
+    items: Vec<IterationItem>,
+    event_id: Option<String>,
+    game_dir: Option<String>,
+    concat_output: bool,
+) -> Result<serde_json::Value, String> {
+    let backend = state.media_backend.clone();
+    let config = state
+        .config
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone()
+        .ok_or_else(|| "Config not loaded".to_string())?;
+
+    let job_id = uuid::Uuid::new_v4().to_string();
+    let reporter = ProgressReporter::new(app, job_id.clone());
+
+    let input = PathBuf::from(&input_clip);
+    let out_dir = PathBuf::from(&output_dir);
+    let eid = event_id.clone();
+    let gdir = game_dir.clone();
+
+    let iter_items: Vec<render_ops::IterationItem> = items
+        .into_iter()
+        .map(|item| render_ops::IterationItem {
+            profile_name: item.profile_name,
+            overrides: item.overrides.map(|o| render_ops::RenderOverrides {
+                crop_mode: o.crop_mode,
+                scale: o.scale,
+                speed: o.speed,
+                smart: o.smart,
+                anchor_x: o.anchor_x,
+                anchor_y: o.anchor_y,
+                pad_color: o.pad_color,
+            }),
+        })
+        .collect();
+
+    let result = tokio::task::spawn_blocking(move || {
+        render_ops::render_iteration(
+            &backend,
+            &config,
+            &input,
+            &out_dir,
+            &iter_items,
+            concat_output,
+            Some(&reporter),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let mut entries = result?;
+
+    // Tag entries with event_id and save to game state
+    if let Some(ref eid) = eid {
+        for entry in &mut entries {
+            entry.event_id = eid.clone();
+        }
+    }
+
+    if let Some(ref gdir) = gdir {
+        let game_path = Path::new(gdir);
+        let mut game_state =
+            reeln_state::load_game_state(game_path).map_err(|e| e.to_string())?;
+        game_state.renders.extend(entries.clone());
+        reeln_state::save_game_state(&game_state, game_path).map_err(|e| e.to_string())?;
+    }
+
+    serde_json::to_value(&entries).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_iteration_profiles(
+    state: State<'_, AppState>,
+    event_type: String,
+) -> Result<Vec<String>, String> {
+    let config = state
+        .config
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone()
+        .ok_or_else(|| "Config not loaded".to_string())?;
+
+    Ok(config.iterations.profiles_for_event(&event_type))
 }
 
 #[tauri::command]

@@ -58,9 +58,11 @@ fn main() {
             commands::media::open_in_finder,
             // Render
             commands::render::render_short,
+            commands::render::render_iteration,
             commands::render::render_preview,
             commands::render::render_reel,
             commands::render::list_render_profiles,
+            commands::render::get_iteration_profiles,
             // Teams
             commands::teams::list_team_levels,
             commands::teams::list_team_profiles,
