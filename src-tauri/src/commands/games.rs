@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, State};
+use reeln_sport::default_event_type_entries;
 
 use crate::models::GameSummary;
 use crate::orchestration::{game_ops, progress::ProgressReporter};
@@ -189,4 +190,88 @@ pub async fn merge_highlights(
 pub fn finish_game(game_dir: String) -> Result<serde_json::Value, String> {
     let game_state = game_ops::finish_game(Path::new(&game_dir))?;
     serde_json::to_value(&game_state).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn bulk_update_event_type(
+    game_dir: String,
+    event_ids: Vec<String>,
+    event_type: String,
+) -> Result<reeln_state::GameState, String> {
+    let path = Path::new(&game_dir);
+    let mut state = reeln_state::load_game_state(path).map_err(|e| e.to_string())?;
+
+    for event in state.events.iter_mut() {
+        if event_ids.contains(&event.id) {
+            event.event_type = event_type.clone();
+        }
+    }
+
+    reeln_state::save_game_state(&state, path).map_err(|e| e.to_string())?;
+    Ok(state)
+}
+
+/// Normalized event type entry for frontend consumption.
+#[derive(serde::Serialize)]
+pub struct EventTypeResponse {
+    pub name: String,
+    pub team_specific: bool,
+}
+
+#[tauri::command]
+pub fn get_event_types(
+    state: State<'_, AppState>,
+) -> Result<Vec<EventTypeResponse>, String> {
+    let config = state.config.lock().map_err(|e| e.to_string())?;
+    let config = config.as_ref().ok_or("Config not loaded")?;
+
+    if !config.event_types.is_empty() {
+        return Ok(config
+            .event_types
+            .iter()
+            .map(|e| EventTypeResponse {
+                name: e.name().to_string(),
+                team_specific: e.team_specific(),
+            })
+            .collect());
+    }
+
+    // Fall back to sport defaults
+    Ok(default_event_type_entries(&config.sport)
+        .into_iter()
+        .map(|(name, team_specific)| EventTypeResponse {
+            name,
+            team_specific,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub fn quick_tag_event(
+    game_dir: String,
+    event_id: String,
+    event_type: String,
+    team: Option<String>,
+) -> Result<reeln_state::GameState, String> {
+    let path = Path::new(&game_dir);
+    let mut state = reeln_state::load_game_state(path).map_err(|e| e.to_string())?;
+
+    let event = state
+        .events
+        .iter_mut()
+        .find(|e| e.id == event_id)
+        .ok_or_else(|| format!("Event {} not found", event_id))?;
+
+    event.event_type = event_type;
+
+    if let Some(ref team_val) = team {
+        event
+            .metadata
+            .insert("team".to_string(), serde_json::Value::String(team_val.clone()));
+    } else {
+        event.metadata.remove("team");
+    }
+
+    reeln_state::save_game_state(&state, path).map_err(|e| e.to_string())?;
+    Ok(state)
 }

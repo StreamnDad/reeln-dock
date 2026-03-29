@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { EventTypeEntry } from "$lib/types/config";
 import type { GameSummary, GameState } from "$lib/types/game";
 import type { HookExecutionResult } from "$lib/types/hooks";
 import type { SportAlias } from "$lib/types/sport";
@@ -66,6 +67,32 @@ export async function finishGame(
   gameDir: string,
 ): Promise<GameState> {
   return invoke<GameState>("finish_game", { gameDir });
+}
+
+export async function bulkUpdateEventType(
+  gameDir: string,
+  eventIds: string[],
+  eventType: string,
+): Promise<GameState> {
+  return invoke<GameState>("bulk_update_event_type", { gameDir, eventIds, eventType });
+}
+
+export async function getEventTypes(): Promise<EventTypeEntry[]> {
+  return invoke<EventTypeEntry[]>("get_event_types");
+}
+
+export async function quickTagEvent(
+  gameDir: string,
+  eventId: string,
+  eventType: string,
+  team?: string,
+): Promise<GameState> {
+  return invoke<GameState>("quick_tag_event", {
+    gameDir,
+    eventId,
+    eventType,
+    team: team ?? null,
+  });
 }
 
 export async function detectReelnCli(): Promise<string> {

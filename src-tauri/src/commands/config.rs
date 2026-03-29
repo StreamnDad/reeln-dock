@@ -106,6 +106,61 @@ pub fn get_config_path(profile: Option<String>) -> String {
     path.display().to_string()
 }
 
+/// Input format for structured event types from the frontend.
+#[derive(serde::Deserialize)]
+pub struct EventTypeInput {
+    pub name: String,
+    #[serde(default)]
+    pub team_specific: bool,
+}
+
+/// Save event types to the active config file.
+#[tauri::command]
+pub fn save_event_types(
+    event_types: Vec<EventTypeInput>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let settings = state.dock_settings.lock().map_err(|e| e.to_string())?;
+    let config_path = settings
+        .reeln_config_path
+        .clone()
+        .ok_or("No config path set")?;
+    drop(settings);
+
+    let content = std::fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+    let mut raw: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| e.to_string())?;
+
+    if let Some(obj) = raw.as_object_mut() {
+        if event_types.is_empty() {
+            obj.remove("event_types");
+        } else {
+            let arr: Vec<serde_json::Value> = event_types
+                .iter()
+                .map(|et| {
+                    if et.team_specific {
+                        serde_json::json!({"name": et.name, "team_specific": true})
+                    } else {
+                        serde_json::Value::String(et.name.clone())
+                    }
+                })
+                .collect();
+            obj.insert("event_types".to_string(), serde_json::Value::Array(arr));
+        }
+    }
+
+    let json = serde_json::to_string_pretty(&raw).map_err(|e| e.to_string())?;
+    let tmp = format!("{config_path}.tmp");
+    std::fs::write(&tmp, &json).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &config_path).map_err(|e| e.to_string())?;
+
+    let config = load_reeln_config(&config_path)?;
+    let mut locked = state.config.lock().map_err(|e| e.to_string())?;
+    *locked = Some(config);
+
+    Ok(())
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 fn load_reeln_config(path: &str) -> Result<reeln_config::AppConfig, String> {

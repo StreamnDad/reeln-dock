@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { GameSummary, GameEvent } from "$lib/types/game";
-  import { updateGameEvent, processSegment, mergeHighlights, finishGame } from "$lib/ipc/games";
+  import type { EventTypeEntry } from "$lib/types/config";
+  import { updateGameEvent, bulkUpdateEventType, getEventTypes, processSegment, mergeHighlights, finishGame } from "$lib/ipc/games";
   import { log } from "$lib/stores/log.svelte";
 
   // Action state
@@ -32,10 +33,30 @@
   let editValue = $state("");
   let showSuggestions = $state(false);
 
-  // Known event types for suggestions
+  // Configured event types from config
+  let configuredEventTypes = $state<EventTypeEntry[]>([]);
+
+  $effect(() => {
+    getEventTypes()
+      .then((types) => { configuredEventTypes = types; })
+      .catch(() => { configuredEventTypes = []; });
+  });
+
+  // Known event type names: merge configured + observed
   let knownEventTypes = $derived(
-    [...new Set(gs.events.map((e) => e.event_type).filter(Boolean))].sort(),
+    [...new Set([...configuredEventTypes.map(e => e.name), ...gs.events.map((e) => e.event_type).filter(Boolean)])].sort(),
   );
+
+  // Event type filter — null means "all"
+  let selectedEventType = $state<string | null>(null);
+
+  // Multi-select state
+  let selectedEventIds = $state<Set<string>>(new Set());
+  let lastClickedIndex = $state<number | null>(null);
+
+  // Bulk tag
+  let bulkTagType = $state("");
+  let bulkTagLoading = $state(false);
 
   let filteredSuggestions = $derived(
     editingCell?.field === "event_type" && editValue
@@ -48,6 +69,9 @@
     let events = gs.events;
     if (selectedSegment !== null) {
       events = events.filter((e) => e.segment_number === selectedSegment);
+    }
+    if (selectedEventType !== null) {
+      events = events.filter((e) => e.event_type === selectedEventType);
     }
     const field = sortField;
     return [...events].sort((a, b) => {
@@ -111,6 +135,49 @@
 
   function selectEvent(event: GameEvent) {
     onSelectEvent?.(activeEventId === event.id ? null : event.id);
+  }
+
+  function toggleCheckbox(event: GameEvent, index: number, shiftKey: boolean) {
+    const newSet = new Set(selectedEventIds);
+    if (shiftKey && lastClickedIndex !== null) {
+      const start = Math.min(lastClickedIndex, index);
+      const end = Math.max(lastClickedIndex, index);
+      for (let i = start; i <= end; i++) {
+        newSet.add(filteredEvents[i].id);
+      }
+    } else {
+      if (newSet.has(event.id)) {
+        newSet.delete(event.id);
+      } else {
+        newSet.add(event.id);
+      }
+    }
+    selectedEventIds = newSet;
+    lastClickedIndex = index;
+  }
+
+  function clearSelection() {
+    selectedEventIds = new Set();
+    lastClickedIndex = null;
+  }
+
+  async function handleBulkTag() {
+    if (!bulkTagType.trim() || selectedEventIds.size === 0) return;
+    bulkTagLoading = true;
+    try {
+      const newState = await bulkUpdateEventType(
+        game.dir_path,
+        [...selectedEventIds],
+        bulkTagType.trim(),
+      );
+      onUpdateGame?.(game.dir_path, (g) => ({ ...g, state: newState }));
+      log.info("GameView", `Bulk tagged ${selectedEventIds.size} events as "${bulkTagType.trim()}"`);
+      clearSelection();
+      bulkTagType = "";
+    } catch (err) {
+      log.error("GameView", `Bulk tag failed: ${err}`);
+    }
+    bulkTagLoading = false;
   }
 
   async function handleProcessSegment(segNum: number) {
@@ -268,11 +335,73 @@
     {/if}
   </div>
 
+  <!-- Event Type Filter Pills -->
+  {#if knownEventTypes.length > 0}
+    <div>
+      <h3 class="text-sm font-semibold uppercase tracking-wider text-text-muted mb-2">Event Types</h3>
+      <div class="flex gap-2 flex-wrap">
+        <button
+          class="px-3 py-1 rounded text-sm font-medium transition-colors"
+          class:bg-secondary={selectedEventType === null}
+          class:text-bg={selectedEventType === null}
+          class:bg-surface={selectedEventType !== null}
+          class:text-text-muted={selectedEventType !== null}
+          class:hover:bg-surface-hover={selectedEventType !== null}
+          onclick={() => (selectedEventType = null)}
+        >
+          All
+        </button>
+        {#each knownEventTypes as et}
+          <button
+            class="px-3 py-1 rounded text-sm font-medium transition-colors"
+            class:bg-secondary={selectedEventType === et}
+            class:text-bg={selectedEventType === et}
+            class:bg-surface={selectedEventType !== et}
+            class:text-text-muted={selectedEventType !== et}
+            class:hover:bg-surface-hover={selectedEventType !== et}
+            onclick={() => (selectedEventType = selectedEventType === et ? null : et)}
+          >
+            {et}
+          </button>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
   <!-- Events Table -->
   <div>
     <h3 class="text-sm font-semibold uppercase tracking-wider text-text-muted mb-2">
-      Events ({filteredEvents.length}{selectedSegment !== null ? ` of ${gs.events.length}` : ""})
+      Events ({filteredEvents.length}{selectedSegment !== null || selectedEventType !== null ? ` of ${gs.events.length}` : ""})
     </h3>
+    <!-- Bulk tag bar -->
+    {#if selectedEventIds.size > 0}
+      <div class="flex items-center gap-3 mb-2 px-3 py-2 bg-primary/20 border border-primary rounded-lg">
+        <span class="text-sm text-text">{selectedEventIds.size} selected</span>
+        <select
+          bind:value={bulkTagType}
+          class="px-2 py-1 bg-bg border border-border rounded text-sm text-text"
+        >
+          <option value="">Select type...</option>
+          {#each knownEventTypes as et}
+            <option value={et}>{et}</option>
+          {/each}
+        </select>
+        <button
+          class="px-3 py-1 bg-secondary text-bg rounded text-sm font-medium transition-colors hover:bg-secondary/80 disabled:opacity-50"
+          onclick={handleBulkTag}
+          disabled={bulkTagLoading || !bulkTagType.trim()}
+        >
+          {bulkTagLoading ? "Tagging..." : "Tag Selected"}
+        </button>
+        <button
+          class="px-3 py-1 text-text-muted hover:text-text text-sm transition-colors"
+          onclick={clearSelection}
+        >
+          Clear
+        </button>
+      </div>
+    {/if}
+
     {#if gs.events.length === 0}
       <p class="text-text-muted text-sm">No events recorded.</p>
     {:else}
@@ -280,6 +409,24 @@
         <table class="w-full text-sm">
           <thead>
             <tr class="border-b border-border text-text-muted text-left">
+              <th class="w-8 px-2 py-2">
+                <input
+                  type="checkbox"
+                  checked={filteredEvents.length > 0 && filteredEvents.every((e) => selectedEventIds.has(e.id))}
+                  onchange={() => {
+                    if (filteredEvents.every((e) => selectedEventIds.has(e.id))) {
+                      const newSet = new Set(selectedEventIds);
+                      for (const e of filteredEvents) newSet.delete(e.id);
+                      selectedEventIds = newSet;
+                    } else {
+                      const newSet = new Set(selectedEventIds);
+                      for (const e of filteredEvents) newSet.add(e.id);
+                      selectedEventIds = newSet;
+                    }
+                  }}
+                  class="rounded"
+                />
+              </th>
               <th class="px-3 py-2 cursor-pointer hover:text-text select-none" onclick={() => toggleSort("event_type")}>
                 Type{sortIndicator("event_type")}
               </th>
@@ -298,13 +445,22 @@
             </tr>
           </thead>
           <tbody>
-            {#each filteredEvents as event (event.id)}
+            {#each filteredEvents as event, index (event.id)}
               <tr
-                class="border-b border-border last:border-0 transition-colors cursor-pointer"
+                class="border-b border-border last:border-0 transition-colors cursor-pointer {selectedEventIds.has(event.id) && activeEventId !== event.id ? 'bg-secondary/10' : ''}"
                 class:bg-primary={activeEventId === event.id}
                 class:hover:bg-surface-hover={activeEventId !== event.id}
                 onclick={() => selectEvent(event)}
               >
+                <!-- Checkbox -->
+                <td class="w-8 px-2 py-2" onclick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={selectedEventIds.has(event.id)}
+                    onclick={(e) => toggleCheckbox(event, index, e.shiftKey)}
+                    class="rounded"
+                  />
+                </td>
                 <!-- Type (combobox) -->
                 <td class="px-3 py-2 font-medium">
                   {#if editingCell?.eventId === event.id && editingCell.field === "event_type"}

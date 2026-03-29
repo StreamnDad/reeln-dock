@@ -1,15 +1,93 @@
 <script lang="ts">
   import { open } from "@tauri-apps/plugin-dialog";
   import { getConfig, getDockSettings, setConfig, setDockSettings } from "$lib/stores/config.svelte";
-  import { saveDockSettings, loadConfigFromPath } from "$lib/ipc/config";
+  import { saveDockSettings, loadConfigFromPath, saveEventTypes } from "$lib/ipc/config";
+  import { getEventTypes } from "$lib/ipc/games";
   import { setGames } from "$lib/stores/games";
   import { listGames } from "$lib/ipc/games";
   import type { DockSettings } from "$lib/types/dock";
+  import type { EventTypeEntry } from "$lib/types/config";
   import LogViewer from "./LogViewer.svelte";
 
   let config = $derived(getConfig());
   let dockSettings = $derived(getDockSettings());
-  let activeTab = $state<"dock" | "config" | "logs">("dock");
+  let activeTab = $state<"dock" | "event-types" | "config" | "logs">("dock");
+
+  // Event types management state
+  let eventTypes = $state<EventTypeEntry[]>([]);
+  let newEventType = $state("");
+  let eventTypesSaving = $state(false);
+  let eventTypesMessage = $state("");
+  let dragIndex = $state<number | null>(null);
+
+  async function loadEventTypes() {
+    try {
+      eventTypes = await getEventTypes();
+    } catch {
+      eventTypes = [];
+    }
+  }
+
+  async function addEventType() {
+    const trimmed = newEventType.trim().toLowerCase();
+    if (!trimmed) return;
+    if (eventTypes.some(et => et.name === trimmed)) {
+      eventTypesMessage = `'${trimmed}' already exists.`;
+      return;
+    }
+    eventTypes = [...eventTypes, { name: trimmed, team_specific: false }];
+    newEventType = "";
+    eventTypesMessage = "";
+    await persistEventTypes();
+  }
+
+  async function removeEventType(index: number) {
+    eventTypes = eventTypes.filter((_, i) => i !== index);
+    await persistEventTypes();
+  }
+
+  async function toggleTeamSpecific(index: number) {
+    eventTypes = eventTypes.map((et, i) =>
+      i === index ? { ...et, team_specific: !et.team_specific } : et,
+    );
+    await persistEventTypes();
+  }
+
+  async function persistEventTypes() {
+    eventTypesSaving = true;
+    try {
+      await saveEventTypes(eventTypes);
+      if (dockSettings.reeln_config_path) {
+        const loaded = await loadConfigFromPath(dockSettings.reeln_config_path);
+        setConfig(loaded.config);
+      }
+      eventTypesMessage = "Saved.";
+    } catch (e) {
+      eventTypesMessage = `Error: ${e}`;
+    }
+    eventTypesSaving = false;
+  }
+
+  function handleDragStart(index: number) {
+    dragIndex = index;
+  }
+
+  function handleDragOver(e: DragEvent, index: number) {
+    e.preventDefault();
+    if (dragIndex === null || dragIndex === index) return;
+    const updated = [...eventTypes];
+    const [moved] = updated.splice(dragIndex, 1);
+    updated.splice(index, 0, moved);
+    eventTypes = updated;
+    dragIndex = index;
+  }
+
+  async function handleDragEnd() {
+    if (dragIndex !== null) {
+      dragIndex = null;
+      await persistEventTypes();
+    }
+  }
   let saving = $state(false);
   let message = $state("");
   let showLogos = $state(true);
@@ -61,6 +139,15 @@
       onclick={() => (activeTab = "dock")}
     >
       Dock
+    </button>
+    <button
+      class="px-3 py-1.5 text-sm rounded transition-colors"
+      class:bg-primary={activeTab === "event-types"}
+      class:text-text-muted={activeTab !== "event-types"}
+      class:hover:text-text={activeTab !== "event-types"}
+      onclick={() => { activeTab = "event-types"; loadEventTypes(); }}
+    >
+      Event Types
     </button>
     <button
       class="px-3 py-1.5 text-sm rounded transition-colors"
@@ -128,6 +215,76 @@
           </div>
         </label>
       </div>
+    </div>
+
+  {:else if activeTab === "event-types"}
+    <div class="bg-surface rounded-lg border border-border p-4 space-y-4">
+      {#if config}
+        <div class="text-sm text-text-muted">
+          Sport: <span class="text-text font-medium">{config.sport}</span>
+        </div>
+      {/if}
+
+      {#if eventTypesMessage}
+        <p class="text-sm text-text-muted">{eventTypesMessage}</p>
+      {/if}
+
+      <!-- Add new type -->
+      <div class="flex gap-2">
+        <input
+          type="text"
+          bind:value={newEventType}
+          placeholder="Add event type..."
+          class="flex-1 px-3 py-1.5 bg-bg border border-border rounded text-sm text-text focus:outline-none focus:border-secondary"
+          onkeydown={(e) => { if (e.key === "Enter") addEventType(); }}
+        />
+        <button
+          class="px-3 py-1.5 bg-primary hover:bg-primary-light text-text rounded text-sm transition-colors disabled:opacity-50"
+          onclick={addEventType}
+          disabled={eventTypesSaving || !newEventType.trim()}
+        >
+          Add
+        </button>
+      </div>
+
+      <!-- Event types list -->
+      {#if eventTypes.length === 0}
+        <p class="text-text-muted text-sm">No event types configured. Add types above or they'll be inferred from the sport defaults.</p>
+      {:else}
+        <div class="space-y-1">
+          {#each eventTypes as et, index (et.name)}
+            <div
+              class="flex items-center gap-2 px-3 py-1.5 bg-bg rounded border transition-colors"
+              class:border-secondary={dragIndex === index}
+              class:border-border={dragIndex !== index}
+              draggable="true"
+              ondragstart={() => handleDragStart(index)}
+              ondragover={(e) => handleDragOver(e, index)}
+              ondragend={handleDragEnd}
+              role="listitem"
+            >
+              <span class="text-text-muted cursor-grab select-none" title="Drag to reorder">&#x2630;</span>
+              <span class="flex-1 text-sm text-text">{et.name}</span>
+              <label class="flex items-center gap-1 text-xs text-text-muted cursor-pointer" title="Show Home/Away variants">
+                <input
+                  type="checkbox"
+                  checked={et.team_specific}
+                  onchange={() => toggleTeamSpecific(index)}
+                  class="accent-secondary"
+                />
+                Team
+              </label>
+              <button
+                class="text-text-muted hover:text-red-400 text-sm transition-colors"
+                onclick={() => removeEventType(index)}
+                title="Remove"
+              >
+                &times;
+              </button>
+            </div>
+          {/each}
+        </div>
+      {/if}
     </div>
 
   {:else if activeTab === "config" && config}

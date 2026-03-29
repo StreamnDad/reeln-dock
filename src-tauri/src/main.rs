@@ -41,11 +41,15 @@ fn main() {
             commands::config::save_dock_settings,
             commands::config::load_config_from_path,
             commands::config::get_config_path,
+            commands::config::save_event_types,
             // Games (read)
             commands::games::list_games,
             commands::games::get_game_state,
             commands::games::set_game_tournament,
             commands::games::update_game_event,
+            commands::games::bulk_update_event_type,
+            commands::games::get_event_types,
+            commands::games::quick_tag_event,
             // Games (execution)
             commands::games::init_game,
             commands::games::process_segment,

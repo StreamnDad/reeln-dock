@@ -63,9 +63,15 @@ export interface IterationConfig {
   mappings: Record<string, string[]>;
 }
 
+export interface EventTypeEntry {
+  name: string;
+  team_specific: boolean;
+}
+
 export interface AppConfig {
   config_version: number;
   sport: string;
+  event_types: EventTypeEntry[];
   video: VideoConfig;
   paths: PathConfig;
   render_profiles: Record<string, RenderProfile>;

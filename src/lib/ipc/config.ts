@@ -22,3 +22,9 @@ export async function getConfigPath(
 ): Promise<string> {
   return invoke<string>("get_config_path", { profile: profile ?? null });
 }
+
+export async function saveEventTypes(
+  eventTypes: { name: string; team_specific: boolean }[],
+): Promise<void> {
+  return invoke<void>("save_event_types", { eventTypes });
+}

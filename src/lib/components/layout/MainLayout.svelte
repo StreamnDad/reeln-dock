@@ -12,7 +12,7 @@
   import { setGames } from "$lib/stores/games";
   import type { GameSummary } from "$lib/types/game";
   import type { TeamProfile } from "$lib/types/team";
-  import { listGames, setGameTournament, getGameState } from "$lib/ipc/games";
+  import { listGames, setGameTournament, getGameState, getEventTypes } from "$lib/ipc/games";
   import { listTeamLevels, listTeamProfiles } from "$lib/ipc/teams";
   import { moveDrag, endDrag, cancelDrag } from "$lib/stores/drag.svelte";
   import { initJobListener } from "$lib/stores/jobs.svelte";
@@ -30,6 +30,17 @@
   let gamesData = $state<GameSummary[]>([]);
   let selectedGameDir = $state<string | null>(null);
   let selectedEventId_ = $state<string | null>(null);
+  let expandedClipReview = $state(false);
+
+  // Structured event types from config
+  import type { EventTypeEntry } from "$lib/types/config";
+  let configuredEventTypes_ = $state<EventTypeEntry[]>([]);
+
+  $effect(() => {
+    getEventTypes()
+      .then((types) => { configuredEventTypes_ = types; })
+      .catch(() => { configuredEventTypes_ = []; });
+  });
   let levelFilter = $state<string | null>(null);
   let statusFilter = $state<GameStatus>("all");
   let search = $state("");
@@ -56,6 +67,29 @@
   function handleUpdateGame(dirPath: string, updater: (g: GameSummary) => GameSummary) {
     gamesData = gamesData.map(g => g.dir_path === dirPath ? updater(g) : g);
     setGames(gamesData);
+  }
+
+  // Event navigation for clip review
+  function getEventIds(): string[] {
+    const game = gamesData.find(g => g.dir_path === selectedGameDir);
+    if (!game) return [];
+    return game.state.events.map(e => e.id);
+  }
+
+  function advanceToNextEvent() {
+    const ids = getEventIds();
+    const idx = ids.indexOf(selectedEventId_ ?? "");
+    if (idx >= 0 && idx < ids.length - 1) {
+      selectedEventId_ = ids[idx + 1];
+    }
+  }
+
+  function advanceToPrevEvent() {
+    const ids = getEventIds();
+    const idx = ids.indexOf(selectedEventId_ ?? "");
+    if (idx > 0) {
+      selectedEventId_ = ids[idx - 1];
+    }
   }
 
   $effect(() => {
@@ -256,29 +290,56 @@
         {@const game = gamesData.find(g => g.dir_path === selectedGameDir)}
         {@const selectedEvent = game?.state.events.find(e => e.id === selectedEventId_)}
         {#if game}
-          <div class="flex h-full">
-            <div class="flex-1 overflow-y-auto min-w-0">
-              <GameView
+          {@const eventIds = game.state.events.map(e => e.id)}
+          {@const currentEventIndex = eventIds.indexOf(selectedEventId_ ?? "")}
+          {#if expandedClipReview && selectedEvent}
+            <div class="h-full overflow-y-auto">
+              <ClipReviewPanel
+                event={selectedEvent}
                 {game}
-                activeEventId={selectedEventId_}
-                onBack={() => { selectedGameDir = null; selectedEventId_ = null; }}
-                onSelectEvent={(id) => { selectedEventId_ = id; }}
+                eventTypes={configuredEventTypes_}
+                iterationMappings={config?.iterations?.mappings ?? {}}
+                expanded={true}
+                eventIndex={currentEventIndex}
+                eventCount={eventIds.length}
+                onClose={() => { selectedEventId_ = null; expandedClipReview = false; }}
                 onUpdateGame={handleUpdateGame}
+                onNext={advanceToNextEvent}
+                onPrev={advanceToPrevEvent}
+                onToggleExpand={() => { expandedClipReview = false; }}
               />
             </div>
-            {#if selectedEvent}
-              <div class="w-1 shrink-0 bg-border"></div>
-              <div class="shrink-0 overflow-y-auto" style="width: 480px">
-                <ClipReviewPanel
-                  event={selectedEvent}
+          {:else}
+            <div class="flex h-full">
+              <div class="flex-1 overflow-y-auto min-w-0">
+                <GameView
                   {game}
-                  iterationMappings={config?.iterations?.mappings ?? {}}
-                  onClose={() => { selectedEventId_ = null; }}
+                  activeEventId={selectedEventId_}
+                  onBack={() => { selectedGameDir = null; selectedEventId_ = null; expandedClipReview = false; }}
+                  onSelectEvent={(id) => { selectedEventId_ = id; }}
                   onUpdateGame={handleUpdateGame}
                 />
               </div>
-            {/if}
-          </div>
+              {#if selectedEvent}
+                <div class="w-1 shrink-0 bg-border"></div>
+                <div class="shrink-0 overflow-y-auto" style="width: 480px">
+                  <ClipReviewPanel
+                    event={selectedEvent}
+                    {game}
+                    eventTypes={configuredEventTypes_}
+                    iterationMappings={config?.iterations?.mappings ?? {}}
+                    eventIndex={currentEventIndex}
+                    eventCount={eventIds.length}
+                    onClose={() => { selectedEventId_ = null; }}
+                    onUpdateGame={handleUpdateGame}
+                    onNext={advanceToNextEvent}
+                    onPrev={advanceToPrevEvent}
+                    onToggleExpand={() => { expandedClipReview = true; }}
+                  />
+                </div>
+              {/if}
+            </div>
+          {/if}
         {/if}
       {:else}
         <!-- All games grid grouped by tournament -->
