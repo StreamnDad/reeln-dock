@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { GameSummary, GameState } from "$lib/types/game";
+import type { HookExecutionResult } from "$lib/types/hooks";
 import type { SportAlias } from "$lib/types/sport";
 
 export async function listGames(
@@ -65,4 +66,22 @@ export async function finishGame(
   gameDir: string,
 ): Promise<GameState> {
   return invoke<GameState>("finish_game", { gameDir });
+}
+
+export async function detectReelnCli(): Promise<string> {
+  return invoke<string>("detect_reeln_cli");
+}
+
+export async function executePluginHook(
+  hook: string,
+  contextData: Record<string, unknown>,
+  shared: Record<string, unknown>,
+  configPath?: string,
+): Promise<HookExecutionResult> {
+  return invoke<HookExecutionResult>("execute_plugin_hook", {
+    hook,
+    contextData,
+    shared,
+    configPath: configPath ?? null,
+  });
 }

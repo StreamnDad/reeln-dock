@@ -476,6 +476,40 @@ fn save_raw_config(path: &str, value: &serde_json::Value) -> Result<(), String> 
     Ok(())
 }
 
+/// Get the enforce_hooks setting from a config profile.
+#[tauri::command]
+pub fn get_enforce_hooks(profile_path: String) -> Result<bool, String> {
+    let raw = load_raw_config(&profile_path)?;
+    let enforce = raw
+        .get("plugins")
+        .and_then(|p| p.get("enforce_hooks"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    Ok(enforce)
+}
+
+/// Set the enforce_hooks setting in a config profile.
+#[tauri::command]
+pub fn set_enforce_hooks(
+    profile_path: String,
+    enforce: bool,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let mut raw = load_raw_config(&profile_path)?;
+
+    let plugins = raw
+        .get_mut("plugins")
+        .and_then(|p| p.as_object_mut())
+        .ok_or("Config missing 'plugins' section")?;
+
+    plugins.insert("enforce_hooks".to_string(), serde_json::Value::Bool(enforce));
+
+    save_raw_config(&profile_path, &raw)?;
+    reload_if_active(&profile_path, &state)?;
+
+    Ok(enforce)
+}
+
 fn reload_if_active(profile_path: &str, state: &AppState) -> Result<(), String> {
     let settings = state.dock_settings.lock().map_err(|e| e.to_string())?;
     let active = settings.reeln_config_path.as_deref().unwrap_or("");

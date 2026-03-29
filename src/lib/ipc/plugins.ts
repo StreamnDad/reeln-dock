@@ -73,3 +73,16 @@ export async function createConfigProfile(
 export async function getVersionInfo(): Promise<VersionInfo> {
   return invoke<VersionInfo>("get_version_info");
 }
+
+export async function getEnforceHooks(
+  profilePath: string,
+): Promise<boolean> {
+  return invoke<boolean>("get_enforce_hooks", { profilePath });
+}
+
+export async function setEnforceHooks(
+  profilePath: string,
+  enforce: boolean,
+): Promise<boolean> {
+  return invoke<boolean>("set_enforce_hooks", { profilePath, enforce });
+}

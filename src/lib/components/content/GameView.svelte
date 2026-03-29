@@ -200,9 +200,9 @@
       {/if}
       <div class="flex gap-2 flex-wrap">
         <!-- Process next segment button: only the next unprocessed one -->
-        {@const maxProcessed = gs.segments_processed.length > 0 ? Math.max(...gs.segments_processed) : 0}
-        {@const nextSeg = maxProcessed + 1}
         {#if !gs.finished}
+          {@const maxProcessed = gs.segments_processed.length > 0 ? Math.max(...gs.segments_processed) : 0}
+          {@const nextSeg = maxProcessed + 1}
           <button
             class="px-3 py-1.5 bg-surface border border-border rounded-lg text-sm hover:bg-surface-hover transition-colors disabled:opacity-50"
             disabled={actionLoading !== null}

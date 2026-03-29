@@ -32,6 +32,9 @@ pub struct DockSettings {
     /// Display preferences (logos, UI toggles).
     #[serde(default)]
     pub display: DisplayPreferences,
+    /// Explicit path to the `reeln` CLI binary (overrides PATH discovery).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reeln_cli_path: Option<String>,
 }
 
 impl Default for DockSettings {
@@ -40,6 +43,7 @@ impl Default for DockSettings {
             reeln_config_path: None,
             plugin_profiles: std::collections::HashMap::new(),
             display: DisplayPreferences::default(),
+            reeln_cli_path: None,
         }
     }
 }

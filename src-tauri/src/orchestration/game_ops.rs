@@ -135,14 +135,47 @@ pub fn process_segment(
         return Err(format!("No videos found in {}", seg_dir.display()));
     }
 
+    // Create events for discovered clips and persist immediately.
+    // This ensures clips are visible in the UI even if concat is cancelled.
+    let existing_clips: std::collections::HashSet<String> =
+        state.events.iter().map(|e| e.clip.clone()).collect();
+    let now = chrono::Utc::now().to_rfc3339();
+
+    for video in &videos {
+        let rel_path = video
+            .strip_prefix(game_dir)
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| video.display().to_string());
+
+        if !existing_clips.contains(&rel_path) {
+            state.events.push(reeln_state::GameEvent {
+                id: uuid::Uuid::new_v4().to_string(),
+                clip: rel_path,
+                segment_number,
+                event_type: String::new(),
+                player: String::new(),
+                created_at: now.clone(),
+                metadata: std::collections::HashMap::new(),
+            });
+        }
+    }
+
+    if !state.segments_processed.contains(&segment_number) {
+        state.segments_processed.push(segment_number);
+        state.segments_processed.sort();
+    }
+
+    reeln_state::save_game_state(&state, game_dir).map_err(|e| e.to_string())?;
+
     if let Some(r) = reporter {
         r.report(
-            "concat",
+            "events",
             0.1,
-            &format!("Concatenating {} videos", videos.len()),
+            &format!("Discovered {} clips, concatenating...", videos.len()),
         );
     }
 
+    // Concat is the slow step — clips are already persisted above
     let output = seg_dir.join(format!("{seg_alias}_merged.mp4"));
     let segment_paths: Vec<&Path> = videos.iter().map(|p| p.as_path()).collect();
 
@@ -158,10 +191,6 @@ pub fn process_segment(
         .concat(&segment_paths, &output, &opts)
         .map_err(|e| e.to_string())?;
 
-    if !state.segments_processed.contains(&segment_number) {
-        state.segments_processed.push(segment_number);
-        state.segments_processed.sort();
-    }
     state
         .segment_outputs
         .push(output.display().to_string());

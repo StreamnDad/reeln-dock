@@ -2,7 +2,7 @@
   import type { SportAlias } from "$lib/types/sport";
   import type { TeamProfile } from "$lib/types/team";
   import type { ConfigProfile, PluginDetail } from "$lib/types/plugin";
-  import { initGame, listSports } from "$lib/ipc/games";
+  import { initGame, listSports, executePluginHook } from "$lib/ipc/games";
   import { listTeamLevels, listTeamProfiles, saveTeamProfile } from "$lib/ipc/teams";
   import { listConfigProfiles, listPluginsForProfile } from "$lib/ipc/plugins";
   import { getPromptTemplate, savePromptTemplate } from "$lib/ipc/prompts";
@@ -351,7 +351,11 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  // Shared context passed between hook phases (on_game_init → on_game_ready)
+  let hookShared = $state<Record<string, unknown>>({});
+
   async function runSingleHook(hook: HookStep): Promise<void> {
+    log.info("NewGame", `Running hook: ${hook.id}`);
     updateHook(hook.id, { status: "running", expanded: true });
 
     try {
@@ -375,66 +379,79 @@
           });
           break;
         }
-        case "openai_generate_title": {
-          const p = prompts.find((t) => t.name === "livestream_title");
-          await sleep(400);
-          updateHook(hook.id, {
-            status: "done",
-            result: p?.rendered || "No livestream_title template configured",
-          });
-          break;
-        }
-        case "openai_generate_description": {
-          const p = prompts.find((t) => t.name === "livestream_description");
-          await sleep(300);
-          updateHook(hook.id, {
-            status: "done",
-            result: p?.rendered || "No livestream_description template configured",
-          });
-          break;
-        }
-        case "openai_generate_thumbnail": {
-          const p = prompts.find((t) => t.name === "game_image");
-          await sleep(500);
-          updateHook(hook.id, {
-            status: "done",
-            result: p?.rendered || "No game_image template configured",
-          });
-          break;
-        }
-        case "scoreboard_init": {
-          await sleep(200);
-          updateHook(hook.id, {
-            status: "done",
-            result: `Scoreboard initialized: ${homeTeam} vs ${awayTeam}`,
-          });
-          break;
-        }
-        case "google_broadcast": {
-          await sleep(300);
-          updateHook(hook.id, {
-            status: "done",
-            result: "YouTube broadcast ready (requires plugin activation)",
-          });
-          break;
-        }
-        case "meta_story": {
-          await sleep(200);
-          updateHook(hook.id, {
-            status: "done",
-            result: "Instagram story draft ready (requires plugin activation)",
-          });
+        case "on_game_init":
+        case "on_game_ready": {
+          const homeProfile = teamsForLevel.find((t) => t.team_name === homeTeam.trim());
+          const awayProfile = teamsForLevel.find((t) => t.team_name === awayTeam.trim());
+
+          const contextData: Record<string, unknown> = {
+            game_dir: createdDirPath,
+            game_info: {
+              sport,
+              home_team: homeTeam.trim(),
+              away_team: awayTeam.trim(),
+              date,
+              venue: venue.trim(),
+              game_time: gameTime.trim(),
+              level: level.trim(),
+              tournament: tournament.trim(),
+            },
+            ...(homeProfile ? { home_profile: homeProfile } : {}),
+            ...(awayProfile ? { away_profile: awayProfile } : {}),
+          };
+
+          const result = await executePluginHook(
+            hook.id,
+            contextData,
+            hookShared,
+            selectedConfigProfile?.path,
+          );
+
+          // Accumulate shared state for next phase
+          hookShared = { ...hookShared, ...result.shared };
+
+          const logSummary = result.logs
+            .filter((l) => !l.startsWith("reeln.plugins.loader:"))
+            .join("\n");
+
+          if (!result.success) {
+            updateHook(hook.id, {
+              status: "failed",
+              error: result.errors.join("\n") || "Hook execution failed",
+              result: logSummary || undefined,
+              expanded: true,
+            });
+          } else if (result.errors.length > 0) {
+            updateHook(hook.id, {
+              status: "done",
+              result: logSummary + "\n\nWarnings:\n" + result.errors.join("\n"),
+            });
+          } else {
+            updateHook(hook.id, {
+              status: "done",
+              result: logSummary || "Hooks completed",
+            });
+          }
           break;
         }
         default:
           updateHook(hook.id, { status: "done" });
       }
     } catch (err) {
-      updateHook(hook.id, {
-        status: "failed",
-        error: String(err),
-        expanded: true,
-      });
+      const message = String(err);
+      if (message.includes("reeln CLI not found")) {
+        updateHook(hook.id, {
+          status: "failed",
+          error: "reeln CLI not installed. Install with: uv pip install reeln",
+          expanded: true,
+        });
+      } else {
+        updateHook(hook.id, {
+          status: "failed",
+          error: message,
+          expanded: true,
+        });
+      }
     }
   }
 
@@ -445,27 +462,6 @@
     await sleep(100);
     await runSingleHook(hook);
   }
-
-  // Known plugin hook descriptions
-  const pluginHookMap: Record<string, { label: string; description: string }[]> = {
-    "openai": [
-      { label: "Generate Title", description: "OpenAI: Generate livestream title" },
-      { label: "Generate Description", description: "OpenAI: Generate livestream description" },
-      { label: "Generate Thumbnail", description: "OpenAI: Generate game thumbnail image" },
-    ],
-    "streamn-scoreboard": [
-      { label: "Init Scoreboard", description: "Scoreboard: Initialize overlay with team data" },
-    ],
-    "google": [
-      { label: "YouTube Broadcast", description: "Google: Create YouTube livestream broadcast" },
-    ],
-    "meta": [
-      { label: "Instagram Story", description: "Meta: Draft Instagram story announcement" },
-    ],
-    "cloudflare": [
-      { label: "Cloudflare Setup", description: "Cloudflare: Prepare video upload pipeline" },
-    ],
-  };
 
   function buildHookSteps(): HookStep[] {
     const steps: HookStep[] = [
@@ -478,29 +474,22 @@
       },
     ];
 
-    // Add hooks for each enabled plugin
-    for (const pluginName of enabledPluginNames) {
-      const hooks = pluginHookMap[pluginName];
-      if (hooks) {
-        for (const hook of hooks) {
-          steps.push({
-            id: `${pluginName}_${hook.label.toLowerCase().replace(/\s+/g, "_")}`,
-            label: hook.label,
-            description: hook.description,
-            status: "pending",
-            expanded: false,
-          });
-        }
-      } else {
-        // Unknown plugin — add a generic hook
-        steps.push({
-          id: `${pluginName}_init`,
-          label: `${pluginName}`,
-          description: `${pluginName}: Initialize plugin`,
-          status: "pending",
-          expanded: false,
-        });
-      }
+    // Add real lifecycle hooks when plugins are enabled
+    if (enabledPluginNames.length > 0) {
+      steps.push({
+        id: "on_game_init",
+        label: "Plugin Hooks (init)",
+        description: `Run ON_GAME_INIT for: ${enabledPluginNames.join(", ")}`,
+        status: "pending",
+        expanded: false,
+      });
+      steps.push({
+        id: "on_game_ready",
+        label: "Plugin Hooks (ready)",
+        description: `Run ON_GAME_READY for: ${enabledPluginNames.join(", ")}`,
+        status: "pending",
+        expanded: false,
+      });
     }
 
     return steps;
@@ -510,13 +499,21 @@
     step = "hooks";
     error = "";
     hooksDone = false;
+    hookShared = {};
 
     hookSteps = buildHookSteps();
 
-    // Run hooks sequentially with pause between phases
-    for (const hook of hookSteps) {
-      await runSingleHook(hook);
-      await sleep(150);
+    // Snapshot the step IDs to iterate — avoid issues with $state proxy
+    // reassignment during updateHook calls
+    const stepIds = hookSteps.map((h) => h.id);
+
+    for (const id of stepIds) {
+      const hook = hookSteps.find((h) => h.id === id);
+      if (hook) {
+        await runSingleHook(hook);
+        // Stop pipeline if a step failed
+        if (hookSteps.find((h) => h.id === id)?.status === "failed") break;
+      }
     }
 
     hooksDone = true;

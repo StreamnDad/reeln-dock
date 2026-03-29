@@ -1,5 +1,6 @@
 pub mod config;
 pub mod games;
+pub mod hooks;
 pub mod media;
 pub mod plugins;
 pub mod prompts;

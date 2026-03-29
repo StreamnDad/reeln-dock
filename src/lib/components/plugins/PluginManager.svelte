@@ -17,6 +17,7 @@
     removePlugin,
     createProfile,
   } from "$lib/stores/plugins.svelte";
+  import { getEnforceHooks, setEnforceHooks } from "$lib/ipc/plugins";
   import PluginCard from "./PluginCard.svelte";
 
   let profiles = $derived(getProfiles());
@@ -27,6 +28,30 @@
   let regLoading = $derived(isRegistryLoading());
   let regError = $derived(getRegistryError());
   let version = $derived(getVersionInfo_());
+
+  // Enforce hooks toggle
+  let enforceHooks = $state(true);
+  let enforceLoading = $state(false);
+
+  $effect(() => {
+    if (selectedPath) {
+      getEnforceHooks(selectedPath)
+        .then((v) => { enforceHooks = v; })
+        .catch(() => { enforceHooks = true; });
+    }
+  });
+
+  async function toggleEnforceHooks() {
+    if (!selectedPath) return;
+    enforceLoading = true;
+    try {
+      enforceHooks = await setEnforceHooks(selectedPath, !enforceHooks);
+    } catch {
+      // revert on failure
+    } finally {
+      enforceLoading = false;
+    }
+  }
 
   // New profile form
   let showNewProfile = $state(false);
@@ -181,6 +206,31 @@
       {/if}
     </div>
   </div>
+
+  <!-- Hook Enforcement Toggle -->
+  {#if selectedPath}
+    <div class="mb-4 flex items-center justify-between px-3 py-2.5 bg-bg rounded-lg border border-border">
+      <div>
+        <span class="text-sm font-medium">Enforce Hook Registry</span>
+        <p class="text-xs text-text-muted mt-0.5">
+          When enabled, plugins can only register hooks declared in the registry.
+          Disable to allow all hooks.
+        </p>
+      </div>
+      <button
+        class="relative w-10 h-5 rounded-full transition-colors"
+        class:bg-primary={enforceHooks}
+        class:bg-zinc-600={!enforceHooks}
+        disabled={enforceLoading}
+        onclick={toggleEnforceHooks}
+      >
+        <span
+          class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform"
+          class:translate-x-5={enforceHooks}
+        ></span>
+      </button>
+    </div>
+  {/if}
 
   <!-- Plugin List -->
   {#if loading || regLoading}

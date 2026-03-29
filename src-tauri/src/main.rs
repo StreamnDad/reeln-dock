@@ -82,6 +82,11 @@ fn main() {
             commands::plugins::remove_plugin_from_config,
             commands::plugins::create_config_profile,
             commands::plugins::get_version_info,
+            commands::plugins::get_enforce_hooks,
+            commands::plugins::set_enforce_hooks,
+            // Hooks (plugin execution via CLI)
+            commands::hooks::detect_reeln_cli,
+            commands::hooks::execute_plugin_hook,
             // Tournaments
             commands::tournaments::list_tournament_metadata,
             commands::tournaments::set_tournament_archived,

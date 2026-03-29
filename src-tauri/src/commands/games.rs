@@ -79,7 +79,7 @@ pub fn set_game_tournament(game_dir: String, tournament: String) -> Result<reeln
 }
 
 #[tauri::command]
-pub fn init_game(
+pub async fn init_game(
     state: State<'_, AppState>,
     sport: String,
     home_team: String,
@@ -97,21 +97,30 @@ pub fn init_game(
         .map_err(|e| e.to_string())?
         .clone()
         .ok_or_else(|| "Config not loaded".to_string())?;
-    let registry = state.sport_registry.lock().map_err(|e| e.to_string())?;
+    let registry = state
+        .sport_registry
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
 
-    let params = game_ops::InitGameParams {
-        sport,
-        home_team,
-        away_team,
-        date,
-        venue,
-        game_time,
-        level,
-        tournament,
-        period_length,
-    };
+    let result = tokio::task::spawn_blocking(move || {
+        let params = game_ops::InitGameParams {
+            sport,
+            home_team,
+            away_team,
+            date,
+            venue,
+            game_time,
+            level,
+            tournament,
+            period_length,
+        };
+        game_ops::init_game(&config, &registry, params)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
-    let (game_dir, game_state) = game_ops::init_game(&config, &registry, params)?;
+    let (game_dir, game_state) = result?;
 
     Ok(GameSummary {
         dir_path: game_dir.display().to_string(),
