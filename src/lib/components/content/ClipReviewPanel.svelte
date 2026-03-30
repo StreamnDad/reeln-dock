@@ -1,5 +1,6 @@
 <script lang="ts">
   import { convertFileSrc } from "@tauri-apps/api/core";
+  import { tick } from "svelte";
   import type { GameEvent, GameSummary } from "$lib/types/game";
   import type { EventTypeEntry, RenderProfile } from "$lib/types/config";
   import type { RenderOverrides, IterationItem } from "$lib/types/render";
@@ -128,6 +129,7 @@
       onUpdateGame?.(game.dir_path, (g) => ({ ...g, state: newState }));
       log.info("ClipReview", `Tagged ${event.id} as ${team ? team + " " : ""}${typeName}`);
       if (autoAdvance) {
+        await tick();
         onNext?.();
       }
     } catch (err) {
@@ -138,6 +140,20 @@
   function handleVideoEnded() {
     if (autoPlay && autoAdvance) {
       onNext?.();
+    }
+  }
+
+  // Keyboard: media keys + escape
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === "MediaTrackNext") {
+      e.preventDefault();
+      onNext?.();
+    } else if (e.key === "MediaTrackPrevious") {
+      e.preventDefault();
+      onPrev?.();
+    } else if (e.key === "Escape" && expanded) {
+      e.preventDefault();
+      onToggleExpand?.();
     }
   }
 
@@ -269,6 +285,8 @@
   }
 </script>
 
+<svelte:window onkeydown={handleKeydown} />
+
 <div class="h-full overflow-y-auto space-y-3 p-4">
   <!-- Header -->
   <div class="flex items-center justify-between">
@@ -295,7 +313,7 @@
           class="text-sm text-text-muted hover:text-text transition-colors"
           onclick={() => onToggleExpand?.()}
           title={expanded ? "Collapse" : "Expand"}
-        >{expanded ? "&#10064;" : "&#9974;"}</button>
+        >{expanded ? "Collapse" : "Expand"}</button>
       {/if}
       <button class="text-sm text-text-muted hover:text-text transition-colors" onclick={() => onClose?.()}>&times;</button>
     </div>
