@@ -192,7 +192,7 @@ pub fn render_short(
                 audio_codec: plan.audio_codec.clone(),
                 ..Default::default()
             };
-            let comp_result = reeln_media::composite::composite_overlay_native(
+            let comp_result = reeln_media::composite::composite_overlay(
                 &result.output,
                 &overlay_png,
                 &composited_output,

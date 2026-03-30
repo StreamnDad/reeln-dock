@@ -223,6 +223,7 @@
         class:bg-zinc-600={!enforceHooks}
         disabled={enforceLoading}
         onclick={toggleEnforceHooks}
+        aria-label="Toggle hook registry enforcement"
       >
         <span
           class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform"

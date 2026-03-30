@@ -33,8 +33,9 @@
 
 <div class="flex flex-col h-full">
   <div class="flex items-center gap-3 mb-3">
-    <label class="text-sm text-text-muted">Level:</label>
+    <label for="log-level-select" class="text-sm text-text-muted">Level:</label>
     <select
+      id="log-level-select"
       class="px-2 py-1 bg-bg border border-border rounded text-sm text-text focus:outline-none focus:border-secondary"
       value={level}
       onchange={(e) => setLogLevel(e.currentTarget.value as LogLevel)}
