@@ -13,6 +13,7 @@
   import RenderingSettingsTab from "./RenderingSettingsTab.svelte";
   import { settingsTeamTarget, settingsTournamentTarget } from "$lib/stores/navigation";
   import { useStore } from "$lib/stores/bridge.svelte";
+  import { getCliStatus, refreshCliStatus } from "$lib/stores/cli.svelte";
 
   let config = $derived(getConfig());
   let dockSettings = $derived(getDockSettings());
@@ -272,6 +273,43 @@
           </div>
         </label>
       </div>
+
+      <!-- CLI Status -->
+      {#if true}
+      {@const cliStatus = getCliStatus()}
+      <div class="border-t border-border pt-4">
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">reeln CLI</h3>
+        <div class="space-y-2">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full {cliStatus.available ? 'bg-green-500' : 'bg-red-500'}"></span>
+            <span class="text-sm">{cliStatus.available ? `reeln ${cliStatus.version}` : "Not found"}</span>
+            <button
+              class="ml-auto px-2 py-0.5 text-xs text-text-muted hover:text-text bg-bg border border-border rounded transition-colors"
+              onclick={() => refreshCliStatus()}
+            >Detect</button>
+          </div>
+          {#if cliStatus.available}
+            <div class="text-xs text-text-muted truncate" title={cliStatus.path ?? ""}>
+              {cliStatus.path}
+            </div>
+            {#if cliStatus.plugins.length > 0}
+              <div class="flex flex-wrap gap-1.5 mt-1">
+                {#each cliStatus.plugins as plugin}
+                  <span class="px-1.5 py-0.5 bg-bg rounded text-[10px] text-text-muted">{plugin.name} {plugin.version}</span>
+                {/each}
+              </div>
+            {:else}
+              <p class="text-xs text-text-muted">No plugins installed.</p>
+            {/if}
+          {:else}
+            <p class="text-xs text-text-muted">
+              Install with: <code class="bg-bg px-1 py-0.5 rounded">uv pip install reeln</code>
+            </p>
+            <p class="text-xs text-text-muted">Plugin features (overlays, smart zoom, uploads) require the CLI.</p>
+          {/if}
+        </div>
+      </div>
+      {/if}
     </div>
 
   {:else if activeTab === "event-types"}

@@ -20,6 +20,7 @@
   import VideoPlayer from "./VideoPlayer.svelte";
   import RenderPlaybackModal from "./RenderPlaybackModal.svelte";
   import DynamicPluginFields from "./DynamicPluginFields.svelte";
+  import CliGate from "$lib/components/CliGate.svelte";
   import { getActiveFieldsForScreen } from "$lib/stores/pluginUI.svelte";
 
   interface Props {
@@ -735,22 +736,24 @@
         </div>
       </div>
 
-      <!-- Plugin profile -->
-      {#if pluginProfiles.length > 0}
-        <div>
-          <label class="block text-xs text-text-muted mb-1" for="clip-plugin-profile">Plugin Profile</label>
-          <select
-            id="clip-plugin-profile"
-            bind:value={selectedPluginProfile}
-            class="w-full px-2 py-1.5 bg-bg border border-border rounded-lg text-xs text-text focus:outline-none focus:border-secondary"
-          >
-            <option value="">None (no plugins)</option>
-            {#each pluginProfiles as pp}
-              <option value={pp.name}>{pp.name}</option>
-            {/each}
-          </select>
-        </div>
-      {/if}
+      <!-- Plugin profile (requires CLI) -->
+      <CliGate requires="cli" showMessage={true}>
+        {#if pluginProfiles.length > 0}
+          <div>
+            <label class="block text-xs text-text-muted mb-1" for="clip-plugin-profile">Plugin Profile</label>
+            <select
+              id="clip-plugin-profile"
+              bind:value={selectedPluginProfile}
+              class="w-full px-2 py-1.5 bg-bg border border-border rounded-lg text-xs text-text focus:outline-none focus:border-secondary"
+            >
+              <option value="">None (no plugins)</option>
+              {#each pluginProfiles as pp}
+                <option value={pp.name}>{pp.name}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
+      </CliGate>
 
       <button
         class="w-full text-left text-xs text-text-muted hover:text-text transition-colors flex items-center gap-1"

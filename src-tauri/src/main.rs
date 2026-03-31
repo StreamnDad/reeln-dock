@@ -101,6 +101,7 @@ fn main() {
             commands::plugins::set_enforce_hooks,
             // Hooks (plugin execution via CLI)
             commands::hooks::detect_reeln_cli,
+            commands::hooks::get_cli_version,
             commands::hooks::execute_plugin_hook,
             // Tournaments
             commands::tournaments::list_tournament_metadata,
