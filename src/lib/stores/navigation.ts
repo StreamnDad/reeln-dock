@@ -14,6 +14,21 @@ export const settingsTeamTarget = writable<string | null>(null);
 /** When set, the Settings > Tournaments tab should auto-select this tournament. */
 export const settingsTournamentTarget = writable<string | null>(null);
 
+/** When set, navigates to the game/event and prefills ClipReviewPanel with these queue settings. */
+export interface EditQueueRequest {
+  gameDir: string;
+  eventId: string;
+  mode?: "short" | "apply";
+  profiles: { profile_name: string; overrides?: Record<string, unknown> }[];
+  concatOutput: boolean;
+  overrides?: Record<string, unknown>;
+  pluginProfile?: string;
+  scorer?: string;
+  assist1?: string;
+  assist2?: string;
+}
+export const editingQueueItem = writable<EditQueueRequest | null>(null);
+
 export function setView(v: View): void {
   currentView.set(v);
 }

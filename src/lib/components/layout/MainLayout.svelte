@@ -21,11 +21,12 @@
   import { initPluginUI } from "$lib/stores/pluginUI.svelte";
   import { loadTournamentMetadata, isArchived } from "$lib/stores/tournaments.svelte";
   import { loadAllTeams } from "$lib/stores/teams.svelte";
-  import { settingsTeamTarget, settingsTournamentTarget } from "$lib/stores/navigation";
+  import { settingsTeamTarget, settingsTournamentTarget, editingQueueItem } from "$lib/stores/navigation";
   import { log } from "$lib/stores/log.svelte";
   import { gameStatus, getTournamentGroups, type GameStatus } from "$lib/stores/games";
   import { getTournamentMetadata } from "$lib/stores/tournaments.svelte";
   import type { View } from "$lib/stores/navigation";
+  import { useStore } from "$lib/stores/bridge.svelte";
 
   type SidebarTab = "games" | "teams" | "tournaments";
 
@@ -107,6 +108,20 @@
     initJobListener().catch((e) => log.error("Jobs", `Failed to init listener: ${e}`));
     initQueue().catch((e) => log.error("RenderQueue", `Failed to load queue: ${e}`));
     initPluginUI().catch((e) => log.error("PluginUI", `Failed to init: ${e}`));
+  });
+
+  // React to edit-from-queue navigation requests
+  const getEditRequest = useStore(editingQueueItem);
+  $effect(() => {
+    const req = getEditRequest();
+    if (req) {
+      // Navigate to the game and select the event
+      view = "games";
+      sidebarTab = "games";
+      selectGame(req.gameDir).then(() => {
+        selectedEventId_ = req.eventId;
+      });
+    }
   });
 
   let config = $derived(getConfig());

@@ -42,6 +42,10 @@ export function getPendingCount(): number {
   return queue.filter((q) => q.status === "pending").length;
 }
 
+export function isClipInQueue(clipPath: string): boolean {
+  return queue.some((q) => q.clipPath === clipPath && q.status === "pending");
+}
+
 export function addToQueue(item: {
   gameDir: string;
   gameName: string;

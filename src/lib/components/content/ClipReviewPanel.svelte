@@ -10,8 +10,10 @@
   import { renderShort, renderIteration, renderPreview, deletePreview, listRenderProfiles } from "$lib/ipc/render";
   import { listConfigProfiles } from "$lib/ipc/plugins";
   import type { ConfigProfile } from "$lib/types/plugin";
-  import { addToQueue as addToRenderQueue } from "$lib/stores/renderQueue.svelte";
+  import { addToQueue as addToRenderQueue, isClipInQueue } from "$lib/stores/renderQueue.svelte";
+  import { editingQueueItem } from "$lib/stores/navigation";
   import { getDockSettings } from "$lib/stores/config.svelte";
+  import { useStore } from "$lib/stores/bridge.svelte";
   import * as uiPrefs from "$lib/stores/uiPrefs.svelte";
   import { log } from "$lib/stores/log.svelte";
   import type { MediaInfoResponse } from "$lib/types/media";
@@ -160,6 +162,29 @@
     }
   });
 
+  // Prefill from queue edit request
+  const getEditRequest = useStore(editingQueueItem);
+  $effect(() => {
+    const req = getEditRequest();
+    if (req && req.eventId === event.id) {
+      // Prefill settings from the queue item
+      if (req.mode) renderMode = req.mode;
+      if (req.profiles.length > 0) {
+        renderQueue = req.profiles.map((p) => ({
+          profile_name: p.profile_name,
+          overrides: p.overrides as import("$lib/types/render").RenderOverrides | undefined,
+        }));
+      }
+      concatOutput = req.concatOutput;
+      if (req.overrides) overrides = req.overrides as import("$lib/types/render").RenderOverrides;
+      if (req.pluginProfile) selectedPluginProfile = req.pluginProfile;
+      // Open render options so user can see the prefilled settings
+      uiPrefs.setShowRender(true);
+      // Clear the request
+      editingQueueItem.set(null);
+    }
+  });
+
   function resolveClipPath(clip: string): string {
     if (clip.startsWith("/")) return clip;
     return `${game.dir_path}/${clip}`;
@@ -168,6 +193,9 @@
   let fullClipPath = $derived(resolveClipPath(event.clip));
   let videoSrc = $derived(convertFileSrc(fullClipPath));
   let videoError = $state(false);
+
+  // Duplicate detection — warn when this clip is already in the queue
+  let clipAlreadyInQueue = $derived(isClipInQueue(fullClipPath));
 
   // Current tag state
   let currentTeam = $derived(
@@ -783,6 +811,12 @@
               onchange={(key, value) => { overrides = { ...overrides, [key]: value }; }}
             />
           {/each}
+        </div>
+      {/if}
+
+      {#if clipAlreadyInQueue}
+        <div class="px-2 py-1.5 bg-yellow-900/20 border border-yellow-800/50 rounded text-[11px] text-yellow-400">
+          This clip is already in the render queue
         </div>
       {/if}
 
