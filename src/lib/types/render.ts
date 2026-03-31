@@ -13,6 +13,8 @@ export interface RenderOverrides {
   anchor_x?: number;
   anchor_y?: number;
   pad_color?: string;
+  zoom_frames?: number;
+  [key: string]: unknown;
 }
 
 export interface IterationItem {

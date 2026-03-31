@@ -16,6 +16,10 @@ pub struct RenderOverrides {
     pub anchor_x: Option<f64>,
     pub anchor_y: Option<f64>,
     pub pad_color: Option<String>,
+    pub zoom_frames: Option<u32>,
+    /// Additional plugin-contributed fields (passed through as-is).
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 /// A single item in a render iteration queue.
@@ -62,6 +66,7 @@ pub async fn render_short(
         anchor_x: o.anchor_x,
         anchor_y: o.anchor_y,
         pad_color: o.pad_color,
+        zoom_frames: o.zoom_frames,
     });
 
     let result = tokio::task::spawn_blocking(move || {
@@ -138,6 +143,7 @@ pub async fn render_iteration(
                 anchor_x: o.anchor_x,
                 anchor_y: o.anchor_y,
                 pad_color: o.pad_color,
+                zoom_frames: o.zoom_frames,
             }),
         })
         .collect();

@@ -4,6 +4,8 @@
   import { getEventTypes } from "$lib/ipc/games";
   import { listRenderProfiles } from "$lib/ipc/render";
   import { listConfigProfiles } from "$lib/ipc/plugins";
+  import { getActiveFieldsForScreen } from "$lib/stores/pluginUI.svelte";
+  import DynamicPluginFields from "$lib/components/content/DynamicPluginFields.svelte";
   import type { RenderProfile, EventTypeEntry } from "$lib/types/config";
   import type { ConfigProfile } from "$lib/types/plugin";
   import type { RenderingDefaults } from "$lib/types/dock";
@@ -24,11 +26,19 @@
   let mappings = $state<Record<string, string[]>>({});
   let newMappingType = $state("");
 
+  // Render mode default
+  let defaultRenderMode = $state<"short" | "apply">("short");
+
   // Override defaults
   let cropMode = $state<string>("");
   let scale = $state<number>(1.0);
   let speed = $state<number>(1.0);
   let smartZoom = $state(false);
+
+  // Plugin field defaults
+  let pluginFieldDefaults = $state<Record<string, unknown>>({});
+  let settingsPluginFields = $derived(getActiveFieldsForScreen("settings"));
+  let renderPluginFields = $derived(getActiveFieldsForScreen("render_options"));
 
   // Event types available to add as mappings (not already mapped)
   let unmappedEventTypes = $derived(
@@ -60,12 +70,15 @@
     const configMappings = config?.iterations?.mappings ?? {};
     const dockMappings = rendering?.iteration_mappings ?? {};
     mappings = { ...configMappings, ...dockMappings };
+    defaultRenderMode = (rendering?.default_render_mode as "short" | "apply") ?? "short";
     // Override defaults
     const ovr = rendering?.overrides;
     cropMode = ovr?.crop_mode ?? "";
     scale = ovr?.scale ?? 1.0;
     speed = ovr?.speed ?? 1.0;
     smartZoom = ovr?.smart ?? false;
+    // Plugin field defaults
+    pluginFieldDefaults = (rendering?.plugin_field_defaults as Record<string, unknown>) ?? {};
   });
 
   function profileLabel(name: string): string {
@@ -110,7 +123,9 @@
         iteration_mappings: mappings,
         default_profile: defaultProfile || null,
         default_plugin_profile: defaultPluginProfile || null,
+        default_render_mode: defaultRenderMode,
         concat_by_default: concatByDefault,
+        plugin_field_defaults: Object.keys(pluginFieldDefaults).length > 0 ? pluginFieldDefaults : undefined,
         overrides: Object.keys(overrides).length > 0 ? overrides as RenderingDefaults["overrides"] : undefined,
       };
       const updated = { ...dockSettings, rendering };
@@ -129,7 +144,9 @@
     mappings = { ...configMappings };
     defaultProfile = "";
     defaultPluginProfile = "";
+    defaultRenderMode = "short";
     concatByDefault = false;
+    pluginFieldDefaults = {};
     cropMode = "";
     scale = 1.0;
     speed = 1.0;
@@ -174,7 +191,49 @@
       <input type="checkbox" bind:checked={concatByDefault} class="accent-secondary" />
       Concatenate multi-format renders by default
     </label>
+
+    <div>
+      <label class="block text-xs text-text-muted mb-1">Default Render Mode</label>
+      <div class="flex gap-1">
+        <button
+          class="flex-1 px-2 py-1.5 rounded text-xs font-medium transition-colors text-center"
+          class:bg-secondary={defaultRenderMode === "short"}
+          class:text-bg={defaultRenderMode === "short"}
+          class:bg-bg={defaultRenderMode !== "short"}
+          class:text-text-muted={defaultRenderMode !== "short"}
+          class:border={defaultRenderMode !== "short"}
+          class:border-border={defaultRenderMode !== "short"}
+          onclick={() => defaultRenderMode = "short"}
+        >Short (crop/scale)</button>
+        <button
+          class="flex-1 px-2 py-1.5 rounded text-xs font-medium transition-colors text-center"
+          class:bg-secondary={defaultRenderMode === "apply"}
+          class:text-bg={defaultRenderMode === "apply"}
+          class:bg-bg={defaultRenderMode !== "apply"}
+          class:text-text-muted={defaultRenderMode !== "apply"}
+          class:border={defaultRenderMode !== "apply"}
+          class:border-border={defaultRenderMode !== "apply"}
+          onclick={() => defaultRenderMode = "apply"}
+        >Apply (full-frame)</button>
+      </div>
+    </div>
   </div>
+
+  <!-- Plugin Field Defaults -->
+  {#if renderPluginFields.length > 0 || settingsPluginFields.length > 0}
+    <div class="bg-surface rounded-lg border border-border p-4 space-y-4">
+      <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">Plugin Defaults</h3>
+      <p class="text-xs text-text-muted">Default values for plugin-contributed render fields.</p>
+      {#each [...renderPluginFields, ...settingsPluginFields] as group}
+        <DynamicPluginFields
+          fields={group.fields}
+          values={pluginFieldDefaults}
+          pluginName={group.pluginName}
+          onchange={(key, value) => { pluginFieldDefaults = { ...pluginFieldDefaults, [key]: value }; }}
+        />
+      {/each}
+    </div>
+  {/if}
 
   <!-- Render Override Defaults -->
   <div class="bg-surface rounded-lg border border-border p-4 space-y-4">

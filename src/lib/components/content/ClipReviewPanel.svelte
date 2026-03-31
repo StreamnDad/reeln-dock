@@ -17,6 +17,8 @@
   import type { MediaInfoResponse } from "$lib/types/media";
   import VideoPlayer from "./VideoPlayer.svelte";
   import RenderPlaybackModal from "./RenderPlaybackModal.svelte";
+  import DynamicPluginFields from "./DynamicPluginFields.svelte";
+  import { getActiveFieldsForScreen } from "$lib/stores/pluginUI.svelte";
 
   interface Props {
     event: GameEvent;
@@ -58,6 +60,9 @@
   let selectedPluginProfile = $state("");
   let renderMode = $state<"short" | "apply">("short");
   let renderResult = $state<RenderEntry | null>(null);
+
+  // Plugin-contributed render option fields
+  let pluginFieldGroups = $derived(getActiveFieldsForScreen("render_options"));
   let renderQueue = $state<IterationItem[]>([]);
   let concatOutput = $state(true);
   let addProfileName = $state("");
@@ -137,14 +142,20 @@
     if (dockRendering?.concat_by_default != null) {
       concatOutput = dockRendering.concat_by_default;
     }
+    // Apply default render mode from dock
+    if (dockRendering?.default_render_mode) {
+      renderMode = dockRendering.default_render_mode as "short" | "apply";
+    }
     // Apply default render overrides from dock
     const dockOverrides = dockRendering?.overrides;
-    if (dockOverrides) {
+    const pluginDefaults = (dockRendering?.plugin_field_defaults as Record<string, unknown>) ?? {};
+    if (dockOverrides || Object.keys(pluginDefaults).length > 0) {
       overrides = {
-        crop_mode: dockOverrides.crop_mode,
-        scale: dockOverrides.scale,
-        speed: dockOverrides.speed,
-        smart: dockOverrides.smart,
+        ...pluginDefaults,
+        crop_mode: dockOverrides?.crop_mode,
+        scale: dockOverrides?.scale,
+        speed: dockOverrides?.speed,
+        smart: dockOverrides?.smart,
       };
     }
   });
@@ -743,10 +754,6 @@
               <button class="text-[10px] text-text-muted hover:text-text" onclick={() => overrides.speed = undefined}>reset</button>
             </div>
           </div>
-          <label class="flex items-center gap-2 text-sm text-text-muted cursor-pointer">
-            <input type="checkbox" bind:checked={overrides.smart} class="accent-secondary" />
-            Smart zoom
-          </label>
           <div>
             <label class="block text-xs text-text-muted mb-1" for="anchor">Anchor</label>
             <select id="anchor" class="w-full px-2 py-1 bg-bg border border-border rounded text-sm text-text focus:outline-none focus:border-secondary" onchange={(e) => {
@@ -763,6 +770,15 @@
               <option value="right">Right</option>
             </select>
           </div>
+          <!-- Plugin-contributed fields -->
+          {#each pluginFieldGroups as group}
+            <DynamicPluginFields
+              fields={group.fields}
+              values={overrides}
+              pluginName={group.pluginName}
+              onchange={(key, value) => { overrides = { ...overrides, [key]: value }; }}
+            />
+          {/each}
         </div>
       {/if}
 

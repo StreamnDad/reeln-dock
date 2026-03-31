@@ -18,6 +18,7 @@
   import { moveDrag, endDrag, cancelDrag } from "$lib/stores/drag.svelte";
   import { initJobListener } from "$lib/stores/jobs.svelte";
   import { initQueue } from "$lib/stores/renderQueue.svelte";
+  import { initPluginUI } from "$lib/stores/pluginUI.svelte";
   import { loadTournamentMetadata, isArchived } from "$lib/stores/tournaments.svelte";
   import { loadAllTeams } from "$lib/stores/teams.svelte";
   import { settingsTeamTarget, settingsTournamentTarget } from "$lib/stores/navigation";
@@ -105,6 +106,7 @@
   $effect(() => {
     initJobListener().catch((e) => log.error("Jobs", `Failed to init listener: ${e}`));
     initQueue().catch((e) => log.error("RenderQueue", `Failed to load queue: ${e}`));
+    initPluginUI().catch((e) => log.error("PluginUI", `Failed to init: ${e}`));
   });
 
   let config = $derived(getConfig());

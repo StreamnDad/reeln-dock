@@ -18,6 +18,7 @@ pub struct RenderOverrides {
     pub anchor_x: Option<f64>,
     pub anchor_y: Option<f64>,
     pub pad_color: Option<String>,
+    pub zoom_frames: Option<u32>,
 }
 
 /// A single item in a render iteration queue.

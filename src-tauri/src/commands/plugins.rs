@@ -32,6 +32,9 @@ pub struct RegistryPlugin {
     pub min_reeln_version: String,
     pub author: String,
     pub license: String,
+    /// Plugin UI contributions — screens and fields the plugin declares.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_contributions: Option<serde_json::Value>,
 }
 
 #[derive(serde::Deserialize)]

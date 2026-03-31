@@ -44,12 +44,18 @@ pub struct RenderingDefaults {
     /// Default plugin configuration profile name (e.g. "default", "production").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_plugin_profile: Option<String>,
+    /// Default render mode: "short" (crop/scale) or "apply" (full-frame).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_render_mode: Option<String>,
     /// Whether to concatenate multi-format renders by default.
     #[serde(default)]
     pub concat_by_default: bool,
     /// Default render overrides (crop, scale, speed, smart).
     #[serde(default)]
     pub overrides: RenderOverrideDefaults,
+    /// Default values for plugin-contributed fields.
+    #[serde(default)]
+    pub plugin_field_defaults: std::collections::HashMap<String, serde_json::Value>,
 }
 
 /// Dock-specific settings, stored separately from the reeln config.
