@@ -254,13 +254,19 @@ pub fn render_short(
     };
     let result = backend.render(&plan).map_err(|e| e.to_string())?;
 
-    // If profile has a subtitle_template, composite the overlay
+    // If profile has a subtitle_template, composite the overlay.
+    // Skip "builtin:" templates — these require the CLI to resolve and render.
+    // The dock's native backend handles only file-path templates.
     let final_output = if let Some(ref template_path_str) = profile.subtitle_template {
-        if let Some(r) = reporter {
-            r.report("overlay", 0.7, "Applying overlay template");
-        }
-        let template_path = Path::new(template_path_str);
-        if template_path.exists() {
+        if template_path_str.starts_with("builtin:") {
+            // Builtin templates need the CLI bridge — skip overlay in native mode
+            result.output
+        } else {
+            if let Some(r) = reporter {
+                r.report("overlay", 0.7, "Applying overlay template");
+            }
+            let template_path = Path::new(template_path_str);
+            if template_path.exists() {
             let template = reeln_overlay::template::load_template(template_path)
                 .map_err(|e| e.to_string())?;
 
@@ -289,8 +295,9 @@ pub fn render_short(
             let _ = std::fs::remove_file(&overlay_png);
 
             comp_result.output
-        } else {
-            result.output
+            } else {
+                result.output
+            }
         }
     } else {
         result.output
