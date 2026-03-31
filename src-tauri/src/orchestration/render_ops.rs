@@ -78,7 +78,53 @@ fn build_apply_plan(
     let mut filters = Vec::new();
     let mut audio_filter = None;
 
-    // Speed filter (no crop/scale)
+    // Speed filter (no crop/scale): prefer speed_segments over scalar speed
+    if let Some(ref segments) = profile.speed_segments {
+        if !segments.is_empty() {
+            let mut vparts = Vec::new();
+            let mut aparts = Vec::new();
+            let mut start = 0.0_f64;
+            for (i, seg) in segments.iter().enumerate() {
+                let end_clause = if let Some(until) = seg.until {
+                    format!(":end={until}")
+                } else {
+                    String::new()
+                };
+                let pts_factor = 1.0 / seg.speed;
+                vparts.push(format!(
+                    "[0:v]trim=start={start}{end_clause},setpts={pts_factor:.4}*(PTS-STARTPTS)[v{i}]"
+                ));
+                aparts.push(format!(
+                    "[0:a]atrim=start={start}{end_clause},asetpts=PTS-STARTPTS,atempo={speed}[a{i}]",
+                    speed = seg.speed,
+                ));
+                if let Some(until) = seg.until {
+                    start = until;
+                }
+            }
+            let n = segments.len();
+            let v_inputs: String = (0..n).map(|i| format!("[v{i}]")).collect();
+            let a_inputs: String = (0..n).map(|i| format!("[a{i}]")).collect();
+            let mut fc_parts: Vec<String> = Vec::new();
+            fc_parts.extend(vparts);
+            fc_parts.extend(aparts);
+            fc_parts.push(format!(
+                "{v_inputs}{a_inputs}concat=n={n}:v=1:a=1[vfinal][aout]"
+            ));
+            return RenderPlan {
+                input: input.to_path_buf(),
+                output: output.to_path_buf(),
+                video_codec,
+                crf,
+                preset,
+                audio_codec,
+                audio_bitrate,
+                filters,
+                filter_complex: Some(fc_parts.join(";")),
+                audio_filter: None,
+            };
+        }
+    }
     if let Some(speed) = profile.speed {
         if (speed - 1.0).abs() > f64::EPSILON {
             let pts_factor = 1.0 / speed;
@@ -152,8 +198,78 @@ fn build_render_plan(
         filters.push(format!("scale=-2:{h}"));
     }
 
-    // Speed filter
+    // Speed filter: prefer speed_segments over scalar speed
     let mut audio_filter = None;
+    if let Some(ref segments) = profile.speed_segments {
+        if !segments.is_empty() {
+            // Build per-segment trim+setpts chains and concatenate them
+            let mut vparts = Vec::new();
+            let mut aparts = Vec::new();
+            let mut start = 0.0_f64;
+            for (i, seg) in segments.iter().enumerate() {
+                let end_clause = if let Some(until) = seg.until {
+                    format!(":end={until}")
+                } else {
+                    String::new()
+                };
+                let pts_factor = 1.0 / seg.speed;
+                vparts.push(format!(
+                    "[0:v]trim=start={start}{end_clause},setpts={pts_factor:.4}*(PTS-STARTPTS)[v{i}]"
+                ));
+                aparts.push(format!(
+                    "[0:a]atrim=start={start}{end_clause},asetpts=PTS-STARTPTS,atempo={speed}[a{i}]",
+                    speed = seg.speed,
+                ));
+                if let Some(until) = seg.until {
+                    start = until;
+                }
+            }
+            let n = segments.len();
+            let v_inputs: String = (0..n).map(|i| format!("[v{i}]")).collect();
+            let a_inputs: String = (0..n).map(|i| format!("[a{i}]")).collect();
+            let mut fc_parts: Vec<String> = Vec::new();
+            fc_parts.extend(vparts);
+            fc_parts.extend(aparts);
+            // Prepend any scale/crop filters to each video segment
+            if !filters.is_empty() {
+                let filter_str = filters.join(",");
+                // Apply scale/crop to the concat output
+                fc_parts.push(format!(
+                    "{v_inputs}{a_inputs}concat=n={n}:v=1:a=1[vout][aout];[vout]{filter_str}[vfinal]"
+                ));
+                // Clear filters since they're in the filter_complex now
+                filters.clear();
+                return RenderPlan {
+                    input: input.to_path_buf(),
+                    output: output.to_path_buf(),
+                    video_codec,
+                    crf,
+                    preset,
+                    audio_codec,
+                    audio_bitrate,
+                    filters,
+                    filter_complex: Some(fc_parts.join(";")),
+                    audio_filter: None,
+                };
+            } else {
+                fc_parts.push(format!(
+                    "{v_inputs}{a_inputs}concat=n={n}:v=1:a=1[vfinal][aout]"
+                ));
+                return RenderPlan {
+                    input: input.to_path_buf(),
+                    output: output.to_path_buf(),
+                    video_codec,
+                    crf,
+                    preset,
+                    audio_codec,
+                    audio_bitrate,
+                    filters,
+                    filter_complex: Some(fc_parts.join(";")),
+                    audio_filter: None,
+                };
+            }
+        }
+    }
     if let Some(speed) = profile.speed {
         if (speed - 1.0).abs() > f64::EPSILON {
             let pts_factor = 1.0 / speed;

@@ -364,13 +364,17 @@
 
   function cleanOverrides(ovr: RenderOverrides): RenderOverrides | undefined {
     const clean: RenderOverrides = {};
-    if (ovr.crop_mode) clean.crop_mode = ovr.crop_mode;
-    if (ovr.scale != null && ovr.scale !== 1.0) clean.scale = ovr.scale;
-    if (ovr.speed != null && ovr.speed !== 1.0) clean.speed = ovr.speed;
-    if (ovr.smart != null) clean.smart = ovr.smart;
-    if (ovr.anchor_x != null) clean.anchor_x = ovr.anchor_x;
-    if (ovr.anchor_y != null) clean.anchor_y = ovr.anchor_y;
-    if (ovr.pad_color) clean.pad_color = ovr.pad_color;
+    for (const [key, value] of Object.entries(ovr)) {
+      if (value == null) continue;
+      // Skip defaults: scale=1.0 and speed=1.0 are no-ops
+      if (key === "scale" && value === 1.0) continue;
+      if (key === "speed" && value === 1.0) continue;
+      // Skip false booleans (e.g. smart=false is a no-op)
+      if (value === false) continue;
+      // Skip empty strings
+      if (value === "") continue;
+      clean[key] = value;
+    }
     return Object.keys(clean).length > 0 ? clean : undefined;
   }
 
