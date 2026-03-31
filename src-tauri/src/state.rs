@@ -19,6 +19,39 @@ pub struct PluginProfile {
     pub settings: std::collections::HashMap<String, serde_json::Value>,
 }
 
+/// Default overrides for render parameters.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RenderOverrideDefaults {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crop_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smart: Option<bool>,
+}
+
+/// Rendering default preferences, persisted in dock settings.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RenderingDefaults {
+    /// Override iteration mappings: event_type → [profile_names].
+    #[serde(default)]
+    pub iteration_mappings: std::collections::HashMap<String, Vec<String>>,
+    /// Default render profile name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_profile: Option<String>,
+    /// Default plugin configuration profile name (e.g. "default", "production").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_plugin_profile: Option<String>,
+    /// Whether to concatenate multi-format renders by default.
+    #[serde(default)]
+    pub concat_by_default: bool,
+    /// Default render overrides (crop, scale, speed, smart).
+    #[serde(default)]
+    pub overrides: RenderOverrideDefaults,
+}
+
 /// Dock-specific settings, stored separately from the reeln config.
 /// Lives in Tauri's app data dir (e.g. ~/Library/Application Support/dad.streamn.reeln-dock/).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,6 +68,9 @@ pub struct DockSettings {
     /// Explicit path to the `reeln` CLI binary (overrides PATH discovery).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reeln_cli_path: Option<String>,
+    /// Rendering default preferences (iteration mappings, default profile, etc.).
+    #[serde(default)]
+    pub rendering: RenderingDefaults,
 }
 
 impl Default for DockSettings {
@@ -44,6 +80,7 @@ impl Default for DockSettings {
             plugin_profiles: std::collections::HashMap::new(),
             display: DisplayPreferences::default(),
             reeln_cli_path: None,
+            rendering: RenderingDefaults::default(),
         }
     }
 }

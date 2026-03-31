@@ -2,7 +2,7 @@
   import { getContext } from "svelte";
   import { getTournamentGroups } from "$lib/stores/games";
   import type { AppContext } from "$lib/context";
-  import { getTournamentMetadata } from "$lib/stores/tournaments.svelte";
+  import { getTournamentMetadata, isArchived } from "$lib/stores/tournaments.svelte";
   import { getDropTarget, setDropTarget, isDragging, getDraggingGameDir, startDrag } from "$lib/stores/drag.svelte";
   import { setGameTournament } from "$lib/ipc/games";
   import { log } from "$lib/stores/log.svelte";
@@ -13,7 +13,7 @@
 
   let tournamentMeta = $derived(getTournamentMetadata());
   let archivedNames = $derived(
-    new Set(tournamentMeta.filter((m) => m.archived).map((m) => m.name)),
+    new Set(tournamentMeta.filter((m) => isArchived(m.name)).map((m) => m.name)),
   );
 
   let groups = $derived(getTournamentGroups(app.games, null, "all", archivedNames, false));

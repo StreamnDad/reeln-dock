@@ -51,6 +51,12 @@ pub struct TournamentMeta {
     pub archived: bool,
     #[serde(default)]
     pub notes: String,
+    #[serde(default)]
+    pub start_date: String,
+    #[serde(default)]
+    pub end_date: String,
+    #[serde(default)]
+    pub url: String,
 }
 
 /// Per-sidebar-mode expand/collapse default.

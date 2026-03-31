@@ -48,8 +48,17 @@ export async function getIterationProfiles(
 export async function renderPreview(
   inputClip: string,
   outputDir: string,
+  profileName?: string,
 ): Promise<string> {
-  return invoke<string>("render_preview", { inputClip, outputDir });
+  return invoke<string>("render_preview", {
+    inputClip,
+    outputDir,
+    profileName: profileName ?? null,
+  });
+}
+
+export async function deletePreview(path: string): Promise<void> {
+  return invoke<void>("delete_preview", { path });
 }
 
 export async function renderReel(

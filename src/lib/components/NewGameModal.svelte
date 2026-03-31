@@ -8,6 +8,8 @@
   import { getPromptTemplate, savePromptTemplate } from "$lib/ipc/prompts";
   import type { GameSummary } from "$lib/types/game";
   import { log } from "$lib/stores/log.svelte";
+  import { lookupTeam } from "$lib/stores/teams.svelte";
+  import TeamLogo from "$lib/components/TeamLogo.svelte";
 
   interface Props {
     onclose: () => void;
@@ -755,8 +757,10 @@
             {:else}
               <div class="flex flex-wrap gap-2">
                 {#each allTeamNames() as team}
+                  {@const profile = lookupTeam(team)}
+                  {@const primaryColor = profile?.colors?.[0]}
                   <button
-                    class="px-3 py-2 rounded-lg text-sm font-medium transition-colors border"
+                    class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors border"
                     class:bg-primary={homeTeam === team}
                     class:border-primary={homeTeam === team}
                     class:text-text={homeTeam === team}
@@ -766,6 +770,10 @@
                     class:hover:border-secondary={homeTeam !== team}
                     onclick={() => (homeTeam = team)}
                   >
+                    {#if primaryColor}
+                      <span class="w-1 self-stretch rounded-full shrink-0" style="background: {primaryColor}"></span>
+                    {/if}
+                    <TeamLogo teamName={team} size="xs" />
                     {team}
                   </button>
                 {/each}
@@ -825,8 +833,10 @@
             {:else}
               <div class="flex flex-wrap gap-2">
                 {#each allTeamNames() as team}
+                  {@const profile = lookupTeam(team)}
+                  {@const primaryColor = profile?.colors?.[0]}
                   <button
-                    class="px-3 py-2 rounded-lg text-sm font-medium transition-colors border"
+                    class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors border"
                     class:bg-primary={awayTeam === team}
                     class:border-primary={awayTeam === team}
                     class:text-text={awayTeam === team}
@@ -836,6 +846,10 @@
                     class:hover:border-secondary={awayTeam !== team}
                     onclick={() => (awayTeam = team)}
                   >
+                    {#if primaryColor}
+                      <span class="w-1 self-stretch rounded-full shrink-0" style="background: {primaryColor}"></span>
+                    {/if}
+                    <TeamLogo teamName={team} size="xs" />
                     {team}
                   </button>
                 {/each}

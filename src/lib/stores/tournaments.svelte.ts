@@ -1,5 +1,5 @@
 import type { TournamentMeta } from "$lib/types/tournament";
-import { listTournamentMetadata, setTournamentArchived } from "$lib/ipc/tournaments";
+import { listTournamentMetadata } from "$lib/ipc/tournaments";
 
 let metadata = $state<TournamentMeta[]>([]);
 let loading = $state(false);
@@ -12,9 +12,11 @@ export function isTournamentsLoading(): boolean {
   return loading;
 }
 
-/** Check if a tournament is archived. Tournaments with no metadata are active. */
+/** A tournament is archived if its end_date is in the past. */
 export function isArchived(name: string): boolean {
-  return metadata.find((m) => m.name === name)?.archived ?? false;
+  const m = metadata.find((m) => m.name === name);
+  if (!m?.end_date) return false;
+  return m.end_date < new Date().toISOString().slice(0, 10);
 }
 
 export async function loadTournamentMetadata(): Promise<void> {
@@ -28,10 +30,3 @@ export async function loadTournamentMetadata(): Promise<void> {
   }
 }
 
-export async function toggleArchived(name: string): Promise<void> {
-  const current = isArchived(name);
-  const updated = await setTournamentArchived(name, !current);
-  metadata = metadata.some((m) => m.name === name)
-    ? metadata.map((m) => (m.name === name ? updated : m))
-    : [...metadata, updated];
-}

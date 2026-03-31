@@ -55,15 +55,18 @@ fn main() {
             commands::games::process_segment,
             commands::games::merge_highlights,
             commands::games::finish_game,
+            commands::games::prune_renders,
             // Sports
             commands::sports::list_sports,
             // Media
             commands::media::probe_clip,
             commands::media::open_in_finder,
+            commands::media::file_exists,
             // Render
             commands::render::render_short,
             commands::render::render_iteration,
             commands::render::render_preview,
+            commands::render::delete_preview,
             commands::render::render_reel,
             commands::render::list_render_profiles,
             commands::render::get_iteration_profiles,
@@ -71,6 +74,12 @@ fn main() {
             commands::teams::list_team_levels,
             commands::teams::list_team_profiles,
             commands::teams::save_team_profile,
+            commands::teams::delete_team_profile,
+            commands::teams::clone_team_profile,
+            commands::teams::rename_team_level,
+            commands::teams::delete_team_level,
+            commands::teams::load_roster,
+            commands::teams::load_team_roster,
             // Prompts
             commands::prompts::list_prompt_templates,
             commands::prompts::get_prompt_template,

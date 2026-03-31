@@ -10,3 +10,7 @@ export async function probeClip(
 export async function openInFinder(path: string): Promise<void> {
   return invoke<void>("open_in_finder", { path });
 }
+
+export async function fileExists(path: string): Promise<boolean> {
+  return invoke<boolean>("file_exists", { path });
+}

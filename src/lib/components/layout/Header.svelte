@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getConfig } from "$lib/stores/config.svelte";
+  import { getPendingCount } from "$lib/stores/renderQueue.svelte";
   import type { View } from "$lib/stores/navigation";
 
   interface Props {
@@ -9,9 +10,11 @@
 
   let { currentView, setView }: Props = $props();
   let config = $derived(getConfig());
+  let pendingCount = $derived(getPendingCount());
 
   const tabs: { label: string; view: View }[] = [
     { label: "Games", view: "games" },
+    { label: "Queue", view: "queue" },
     { label: "Plugins", view: "plugins" },
     { label: "Registry", view: "registry" },
     { label: "Settings", view: "settings" },
@@ -28,7 +31,7 @@
     <nav class="flex items-center gap-1 ml-8">
       {#each tabs as tab}
         <button
-          class="px-3 py-1.5 text-sm rounded transition-colors"
+          class="px-3 py-1.5 text-sm rounded transition-colors flex items-center gap-1.5"
           class:bg-primary={currentView === tab.view}
           class:text-text={currentView === tab.view}
           class:text-text-muted={currentView !== tab.view}
@@ -36,6 +39,9 @@
           onclick={() => setView(tab.view)}
         >
           {tab.label}
+          {#if tab.view === "queue" && pendingCount > 0}
+            <span class="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-secondary text-bg leading-none">{pendingCount}</span>
+          {/if}
         </button>
       {/each}
     </nav>

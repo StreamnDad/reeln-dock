@@ -5,7 +5,7 @@
 
   interface Props {
     teamName: string;
-    size?: "xs" | "sm" | "md" | "lg";
+    size?: "xs" | "sm" | "md" | "lg" | "xl";
   }
 
   let { teamName, size = "sm" }: Props = $props();
@@ -40,6 +40,7 @@
     sm: "w-5 h-5",
     md: "w-8 h-8",
     lg: "w-12 h-12",
+    xl: "w-24 h-24",
   };
 </script>
 

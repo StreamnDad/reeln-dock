@@ -27,7 +27,17 @@ pub fn update_game_event(
         "clip" => event.clip = value,
         "event_type" => event.event_type = value,
         "player" => event.player = value,
-        other => return Err(format!("Unknown field: {}", other)),
+        other => {
+            // Handle metadata fields (e.g. "scorer", "assist1", "assist2")
+            if value.is_empty() {
+                event.metadata.remove(other);
+            } else {
+                event.metadata.insert(
+                    other.to_string(),
+                    serde_json::Value::String(value),
+                );
+            }
+        }
     }
 
     reeln_state::save_game_state(&state, path).map_err(|e| e.to_string())?;
@@ -244,6 +254,41 @@ pub fn get_event_types(
             team_specific,
         })
         .collect())
+}
+
+/// Remove render output files from disk and clear the renders array in game state.
+/// Aligned with reeln-cli prune behavior for render artifacts.
+#[tauri::command]
+pub fn prune_renders(game_dir: String) -> Result<serde_json::Value, String> {
+    let path = Path::new(&game_dir);
+    let mut state = reeln_state::load_game_state(path).map_err(|e| e.to_string())?;
+
+    let mut removed = 0u32;
+    let mut bytes_freed = 0u64;
+
+    for render in &state.renders {
+        let output_path = Path::new(&render.output);
+        if output_path.is_file() {
+            if let Ok(meta) = std::fs::metadata(output_path) {
+                bytes_freed += meta.len();
+            }
+            if std::fs::remove_file(output_path).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+
+    let total = state.renders.len() as u32;
+    state.renders.clear();
+    reeln_state::save_game_state(&state, path).map_err(|e| e.to_string())?;
+
+    serde_json::to_value(&serde_json::json!({
+        "state": state,
+        "removed_files": removed,
+        "cleared_entries": total,
+        "bytes_freed": bytes_freed,
+    }))
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

@@ -8,10 +8,31 @@
   import type { DockSettings } from "$lib/types/dock";
   import type { EventTypeEntry } from "$lib/types/config";
   import LogViewer from "./LogViewer.svelte";
+  import TeamsSettingsTab from "./TeamsSettingsTab.svelte";
+  import TournamentsSettingsTab from "./TournamentsSettingsTab.svelte";
+  import RenderingSettingsTab from "./RenderingSettingsTab.svelte";
+  import { settingsTeamTarget, settingsTournamentTarget } from "$lib/stores/navigation";
+  import { useStore } from "$lib/stores/bridge.svelte";
 
   let config = $derived(getConfig());
   let dockSettings = $derived(getDockSettings());
-  let activeTab = $state<"dock" | "event-types" | "config" | "logs">("dock");
+  let activeTab = $state<"dock" | "teams" | "tournaments" | "event-types" | "rendering" | "config" | "logs">("dock");
+
+  const getTeamTarget = useStore(settingsTeamTarget);
+  const getTournamentTarget = useStore(settingsTournamentTarget);
+
+  // Auto-switch to teams/tournaments tab when navigating from sidebar
+  $effect(() => {
+    if (getTeamTarget()) {
+      activeTab = "teams";
+    }
+  });
+
+  $effect(() => {
+    if (getTournamentTarget()) {
+      activeTab = "tournaments";
+    }
+  });
 
   // Event types management state
   let eventTypes = $state<EventTypeEntry[]>([]);
@@ -142,12 +163,39 @@
     </button>
     <button
       class="px-3 py-1.5 text-sm rounded transition-colors"
+      class:bg-primary={activeTab === "teams"}
+      class:text-text-muted={activeTab !== "teams"}
+      class:hover:text-text={activeTab !== "teams"}
+      onclick={() => (activeTab = "teams")}
+    >
+      Teams
+    </button>
+    <button
+      class="px-3 py-1.5 text-sm rounded transition-colors"
+      class:bg-primary={activeTab === "tournaments"}
+      class:text-text-muted={activeTab !== "tournaments"}
+      class:hover:text-text={activeTab !== "tournaments"}
+      onclick={() => (activeTab = "tournaments")}
+    >
+      Tournaments
+    </button>
+    <button
+      class="px-3 py-1.5 text-sm rounded transition-colors"
       class:bg-primary={activeTab === "event-types"}
       class:text-text-muted={activeTab !== "event-types"}
       class:hover:text-text={activeTab !== "event-types"}
       onclick={() => { activeTab = "event-types"; loadEventTypes(); }}
     >
       Event Types
+    </button>
+    <button
+      class="px-3 py-1.5 text-sm rounded transition-colors"
+      class:bg-primary={activeTab === "rendering"}
+      class:text-text-muted={activeTab !== "rendering"}
+      class:hover:text-text={activeTab !== "rendering"}
+      onclick={() => (activeTab = "rendering")}
+    >
+      Rendering
     </button>
     <button
       class="px-3 py-1.5 text-sm rounded transition-colors"
@@ -173,7 +221,16 @@
     <p class="text-sm text-text-muted mb-4">{message}</p>
   {/if}
 
-  {#if activeTab === "dock"}
+  {#if activeTab === "teams"}
+    <TeamsSettingsTab />
+
+  {:else if activeTab === "tournaments"}
+    <TournamentsSettingsTab />
+
+  {:else if activeTab === "rendering"}
+    <RenderingSettingsTab />
+
+  {:else if activeTab === "dock"}
     <div class="bg-surface rounded-lg border border-border p-4 space-y-4">
       <div>
         <label class="block text-sm text-text-muted mb-1" for="config-path">Config File Path</label>

@@ -44,3 +44,8 @@ pub fn open_in_finder(path: String) -> Result<(), String> {
 
     Ok(())
 }
+
+#[tauri::command]
+pub fn file_exists(path: String) -> bool {
+    Path::new(&path).exists()
+}

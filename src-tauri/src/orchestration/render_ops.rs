@@ -328,23 +328,65 @@ pub fn render_iteration(
 }
 
 /// Render a low-res preview of a clip.
+///
+/// When `config` and `profile_name` are provided, applies the profile's crop/scale
+/// settings so the preview shows accurate framing. Encoding stays fast (ultrafast, CRF 28).
+/// When omitted, falls back to a simple 640p resize.
 pub fn render_preview(
     backend: &Arc<dyn MediaBackend>,
     input_clip: &Path,
     output_dir: &Path,
+    config: Option<&AppConfig>,
+    profile_name: Option<&str>,
     reporter: Option<&ProgressReporter>,
 ) -> Result<PathBuf, String> {
     let stem = input_clip
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("clip");
-    let output = output_dir.join(format!("{stem}_preview.mp4"));
+    let suffix = profile_name.unwrap_or("preview");
+    let output = output_dir.join(format!("{stem}_{suffix}_preview.mp4"));
 
     std::fs::create_dir_all(output_dir).map_err(|e| e.to_string())?;
 
     if let Some(r) = reporter {
         r.report("render", 0.1, "Rendering preview");
     }
+
+    // Build filters from profile if available, otherwise default 640p
+    let filters = match (config, profile_name) {
+        (Some(cfg), Some(pname)) => {
+            if let Some(profile) = cfg.render_profiles.get(pname) {
+                let mut f = Vec::new();
+                if let (Some(w), Some(h)) = (profile.width, profile.height) {
+                    match profile.crop_mode.as_deref() {
+                        Some("crop") => {
+                            f.push(format!("crop={w}:{h}"));
+                        }
+                        Some("pad") => {
+                            let pad_color = profile.pad_color.as_deref().unwrap_or("black");
+                            f.push(format!(
+                                "scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color={pad_color}"
+                            ));
+                        }
+                        _ => {
+                            f.push(format!("scale={w}:{h}"));
+                        }
+                    }
+                } else if let Some(w) = profile.width {
+                    f.push(format!("scale={w}:-2"));
+                } else if let Some(h) = profile.height {
+                    f.push(format!("scale=-2:{h}"));
+                } else {
+                    f.push("scale=640:-2".to_string());
+                }
+                f
+            } else {
+                vec!["scale=640:-2".to_string()]
+            }
+        }
+        _ => vec!["scale=640:-2".to_string()],
+    };
 
     let plan = RenderPlan {
         input: input_clip.to_path_buf(),
@@ -354,7 +396,7 @@ pub fn render_preview(
         preset: Some("ultrafast".to_string()),
         audio_codec: "aac".to_string(),
         audio_bitrate: Some(96),
-        filters: vec!["scale=640:-2".to_string()],
+        filters,
         filter_complex: None,
         audio_filter: None,
     };

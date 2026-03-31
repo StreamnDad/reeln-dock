@@ -6,6 +6,7 @@
   import SettingsView from "$lib/components/settings/SettingsView.svelte";
   import GameView from "$lib/components/content/GameView.svelte";
   import ClipReviewPanel from "$lib/components/content/ClipReviewPanel.svelte";
+  import RenderQueueView from "$lib/components/content/RenderQueueView.svelte";
   import NewGameModal from "$lib/components/NewGameModal.svelte";
   import TeamLogo from "$lib/components/TeamLogo.svelte";
   import { getConfig } from "$lib/stores/config.svelte";
@@ -16,8 +17,9 @@
   import { listTeamLevels, listTeamProfiles } from "$lib/ipc/teams";
   import { moveDrag, endDrag, cancelDrag } from "$lib/stores/drag.svelte";
   import { initJobListener } from "$lib/stores/jobs.svelte";
-  import { loadTournamentMetadata } from "$lib/stores/tournaments.svelte";
+  import { loadTournamentMetadata, isArchived } from "$lib/stores/tournaments.svelte";
   import { loadAllTeams } from "$lib/stores/teams.svelte";
+  import { settingsTeamTarget, settingsTournamentTarget } from "$lib/stores/navigation";
   import { log } from "$lib/stores/log.svelte";
   import { gameStatus, getTournamentGroups, type GameStatus } from "$lib/stores/games";
   import { getTournamentMetadata } from "$lib/stores/tournaments.svelte";
@@ -45,6 +47,7 @@
   let statusFilter = $state<GameStatus>("all");
   let search = $state("");
   let showNewGame = $state(false);
+  let showEnded = $state(false);
 
   // Teams data
   let teamLevels = $state<string[]>([]);
@@ -139,8 +142,8 @@
       {@const levels = [...new Set(gamesData.map(g => g.state.game_info.level).filter(Boolean))].sort()}
       {@const statusCounts = (() => { const c = { all: gamesData.length, new: 0, active: 0, done: 0 }; for (const g of gamesData) { const s = gameStatus(g); if (s in c) c[s]++; } return c; })()}
       {@const tournamentMeta = getTournamentMetadata()}
-      {@const archivedNames = new Set(tournamentMeta.filter(m => m.archived).map(m => m.name))}
-      {@const groups = getTournamentGroups(gamesData, levelFilter, statusFilter, archivedNames, false)}
+      {@const archivedNames = new Set(tournamentMeta.filter(m => isArchived(m.name)).map(m => m.name))}
+      {@const groups = getTournamentGroups(gamesData, levelFilter, statusFilter, archivedNames, showEnded)}
       {@const filteredGroups = groups.map(g => ({ ...g, games: g.games.filter(game => { if (!search) return true; const q = search.toLowerCase(); const info = game.state.game_info; return info.home_team.toLowerCase().includes(q) || info.away_team.toLowerCase().includes(q) || info.date.includes(q) || info.tournament.toLowerCase().includes(q); })})).filter(g => g.games.length > 0)}
       {@const allTournamentNames = [...new Set(gamesData.map(g => g.state.game_info.tournament).filter(Boolean))].sort()}
       <div class="w-72 shrink-0 overflow-y-auto border-r border-border bg-surface flex flex-col">
@@ -175,10 +178,15 @@
 
           <!-- Status filter -->
           <div class="px-3 pt-1.5 pb-1">
-            <div class="flex gap-1">
+            <div class="flex gap-1 items-center">
               {#each ["all", "new", "active", "done"] as opt}
                 <button class="px-2 py-0.5 rounded text-[11px] font-medium transition-colors" class:bg-primary={statusFilter === opt} class:text-text={statusFilter === opt} class:text-text-muted={statusFilter !== opt} onclick={() => statusFilter = opt as GameStatus}>{opt} <span class="opacity-60">{statusCounts[opt as GameStatus]}</span></button>
               {/each}
+              <button
+                class="ml-auto px-1.5 py-0.5 rounded text-[10px] transition-colors {showEnded ? 'text-secondary' : 'text-text-muted hover:text-text'}"
+                onclick={() => showEnded = !showEnded}
+                title={showEnded ? "Hide ended tournaments" : "Show ended tournaments"}
+              >{showEnded ? "ended" : "+ended"}</button>
             </div>
           </div>
 
@@ -238,7 +246,11 @@
                   <div class="px-2 py-1 text-xs font-semibold uppercase tracking-wider text-text-muted">{level} ({teamsByLevel[level]?.length ?? 0})</div>
                   {#each teamsByLevel[level] ?? [] as team}
                     {@const primaryColor = team.colors?.[0] ?? "#555"}
-                    <div class="flex items-center gap-2.5 w-full pl-1 pr-2 py-2 rounded-lg text-sm mb-0.5">
+                    <button
+                      class="flex items-center gap-2.5 w-full pl-1 pr-2 py-2 rounded-lg text-sm mb-0.5 text-left transition-colors hover:bg-surface-hover"
+                      onclick={() => { settingsTeamTarget.set(`${level}/${team.team_name}`); view = "settings"; }}
+                      title="Edit in Settings"
+                    >
                       <div class="w-1 self-stretch rounded-full shrink-0" style="background: {primaryColor}"></div>
                       <TeamLogo teamName={team.team_name} size="md" />
                       <div class="flex flex-col min-w-0 flex-1">
@@ -247,7 +259,7 @@
                           <span class="text-[11px] text-text-muted truncate">{team.short_name}</span>
                         {/if}
                       </div>
-                    </div>
+                    </button>
                   {/each}
                 </div>
               {/each}
@@ -263,7 +275,11 @@
               {#each allTournamentNames as name}
                 {@const tGames = gamesData.filter(g => g.state.game_info.tournament === name)}
                 {@const doneCount = tGames.filter(g => g.state.finished).length}
-                <button class="w-full text-left px-3 py-2.5 rounded-lg mb-1 transition-colors hover:bg-surface-hover" onclick={() => {}}>
+                <button
+                  class="w-full text-left px-3 py-2.5 rounded-lg mb-1 transition-colors hover:bg-surface-hover"
+                  onclick={() => { settingsTournamentTarget.set(name); view = "settings"; }}
+                  title="Manage in Settings"
+                >
                   <div class="font-medium text-sm">{name}</div>
                   <div class="text-xs text-text-muted mt-1">
                     {tGames.length} game{tGames.length !== 1 ? "s" : ""}
@@ -284,6 +300,8 @@
         <PluginManager />
       {:else if view === "registry"}
         <PluginRegistryView />
+      {:else if view === "queue"}
+        <RenderQueueView />
       {:else if view === "settings"}
         <SettingsView />
       {:else if selectedGameDir}
@@ -348,8 +366,8 @@
           <p class="text-text-muted">Loading games...</p>
         {:else}
           {@const tournamentMeta2 = getTournamentMetadata()}
-          {@const archivedNames2 = new Set(tournamentMeta2.filter(m => m.archived).map(m => m.name))}
-          {@const contentGroups = getTournamentGroups(gamesData, levelFilter, statusFilter, archivedNames2, false)}
+          {@const archivedNames2 = new Set(tournamentMeta2.filter(m => isArchived(m.name)).map(m => m.name))}
+          {@const contentGroups = getTournamentGroups(gamesData, levelFilter, statusFilter, archivedNames2, showEnded)}
           {#each contentGroups as group}
             <div class="mb-6">
               <h3 class="text-sm font-semibold uppercase tracking-wider text-text-muted mb-3">{group.tournament} <span class="text-xs ml-1">{group.games.length} game{group.games.length !== 1 ? "s" : ""}</span></h3>

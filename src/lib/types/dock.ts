@@ -16,10 +16,26 @@ export interface DisplayPreferences {
   sections_expanded: SectionsExpanded;
 }
 
+export interface RenderOverrideDefaults {
+  crop_mode?: string;
+  scale?: number;
+  speed?: number;
+  smart?: boolean;
+}
+
+export interface RenderingDefaults {
+  iteration_mappings: Record<string, string[]>;
+  default_profile: string | null;
+  default_plugin_profile: string | null;
+  concat_by_default: boolean;
+  overrides?: RenderOverrideDefaults;
+}
+
 export interface DockSettings {
   reeln_config_path: string | null;
   plugin_profiles: Record<string, PluginProfile>;
   display: DisplayPreferences;
+  rendering?: RenderingDefaults;
 }
 
 export interface DockSettingsWithConfig {

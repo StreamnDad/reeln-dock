@@ -1,7 +1,7 @@
 <script lang="ts">
   import { games, gameStatus, getGamesForTournament, updateGameState, setSelectedGameDir } from "$lib/stores/games";
   import { useStore } from "$lib/stores/bridge.svelte";
-  import { isArchived, toggleArchived, getTournamentMetadata } from "$lib/stores/tournaments.svelte";
+  import { isArchived, getTournamentMetadata } from "$lib/stores/tournaments.svelte";
   import { selectedTournamentName, setSidebarMode } from "$lib/stores/navigation";
   import { setGameTournament } from "$lib/ipc/games";
   import { updateTournamentMetadata } from "$lib/ipc/tournaments";
@@ -23,9 +23,17 @@
   let renaming = $state(false);
   let renameValue = $state("");
   let notes = $state("");
+  let startDate = $state("");
+  let endDate = $state("");
+  let url = $state("");
 
   $effect(() => {
     notes = meta?.notes ?? "";
+    startDate = meta?.start_date ?? "";
+    endDate = meta?.end_date ?? "";
+    url = meta?.url ?? "";
+    saveMessage = "";
+    renaming = false;
   });
 
   function startRename() {
@@ -49,19 +57,27 @@
     selectedTournamentName.set(newName);
   }
 
-  async function handleToggleArchive() {
-    await toggleArchived(tournamentName);
-  }
+  let saving = $state(false);
+  let saveMessage = $state("");
 
-  async function saveNotes() {
+  async function saveMeta() {
+    saving = true;
+    saveMessage = "";
     try {
       await updateTournamentMetadata({
         name: tournamentName,
-        archived,
+        archived: false,
         notes: notes.trim(),
+        start_date: startDate,
+        end_date: endDate,
+        url: url.trim(),
       });
+      saveMessage = "Saved.";
     } catch (err) {
-      log.error("Tournament", `Failed to save notes: ${err}`);
+      saveMessage = `Error: ${err}`;
+      log.error("Tournament", `Failed to save metadata: ${err}`);
+    } finally {
+      saving = false;
     }
   }
 
@@ -100,23 +116,10 @@
       >&#9998;</button>
     {/if}
 
-    <div class="ml-auto flex items-center gap-2">
-      <button
-        class="px-3 py-1.5 text-xs border rounded-lg transition-colors {archived
-          ? 'border-secondary text-secondary hover:bg-secondary/10'
-          : 'border-border text-text-muted hover:text-text hover:border-secondary'}"
-        onclick={handleToggleArchive}
-      >
-        {archived ? "Unarchive" : "Archive"}
-      </button>
-    </div>
+    {#if archived}
+      <span class="ml-auto text-xs px-2 py-1 rounded-full bg-bg text-text-muted border border-border">Ended</span>
+    {/if}
   </div>
-
-  {#if archived}
-    <div class="bg-bg border border-border rounded-lg p-3 mb-4 text-sm text-text-muted">
-      This tournament is archived and hidden from the Games sidebar by default.
-    </div>
-  {/if}
 
   <!-- Stats row -->
   <div class="grid grid-cols-4 gap-3 mb-6">
@@ -138,19 +141,66 @@
     </div>
   </div>
 
-  <!-- Notes -->
-  <div class="mb-6">
-    <label class="block text-xs font-semibold uppercase tracking-wider text-text-muted mb-1.5" for="notes">
-      Notes
-    </label>
-    <textarea
-      id="notes"
-      bind:value={notes}
-      onblur={saveNotes}
-      placeholder="Tournament notes..."
-      rows="2"
-      class="w-full px-3 py-2 bg-surface border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-secondary resize-y"
-    ></textarea>
+  <!-- Dates, URL & Notes -->
+  <div class="bg-surface rounded-lg border border-border p-4 mb-6 space-y-4">
+    <div class="grid grid-cols-2 gap-4">
+      <div>
+        <label class="block text-xs font-semibold uppercase tracking-wider text-text-muted mb-1.5" for="start-date">
+          Start Date
+        </label>
+        <input
+          id="start-date"
+          type="date"
+          bind:value={startDate}
+          class="w-full px-3 py-1.5 bg-bg border border-border rounded-lg text-sm text-text focus:outline-none focus:border-secondary"
+        />
+      </div>
+      <div>
+        <label class="block text-xs font-semibold uppercase tracking-wider text-text-muted mb-1.5" for="end-date">
+          End Date
+        </label>
+        <input
+          id="end-date"
+          type="date"
+          bind:value={endDate}
+          class="w-full px-3 py-1.5 bg-bg border border-border rounded-lg text-sm text-text focus:outline-none focus:border-secondary"
+        />
+      </div>
+    </div>
+    <div>
+      <label class="block text-xs font-semibold uppercase tracking-wider text-text-muted mb-1.5" for="url">
+        URL
+      </label>
+      <input
+        id="url"
+        type="url"
+        bind:value={url}
+        placeholder="https://..."
+        class="w-full px-3 py-1.5 bg-bg border border-border rounded-lg text-sm text-text font-mono placeholder:text-text-muted focus:outline-none focus:border-secondary"
+      />
+    </div>
+    <div>
+      <label class="block text-xs font-semibold uppercase tracking-wider text-text-muted mb-1.5" for="notes">
+        Notes
+      </label>
+      <textarea
+        id="notes"
+        bind:value={notes}
+        placeholder="Tournament notes..."
+        rows="2"
+        class="w-full px-3 py-2 bg-bg border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-secondary resize-y"
+      ></textarea>
+    </div>
+    <div class="flex items-center gap-3 pt-1">
+      <button
+        class="px-4 py-1.5 bg-primary hover:bg-primary-light text-text rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+        onclick={saveMeta}
+        disabled={saving}
+      >{saving ? "Saving..." : "Save"}</button>
+      {#if saveMessage}
+        <span class="text-sm text-text-muted">{saveMessage}</span>
+      {/if}
+    </div>
   </div>
 
   <!-- Games list -->

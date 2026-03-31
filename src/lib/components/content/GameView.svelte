@@ -1,8 +1,9 @@
 <script lang="ts">
-  import type { GameSummary, GameEvent } from "$lib/types/game";
+  import type { GameSummary, GameEvent, RenderEntry } from "$lib/types/game";
   import type { EventTypeEntry } from "$lib/types/config";
-  import { updateGameEvent, bulkUpdateEventType, getEventTypes, processSegment, mergeHighlights, finishGame } from "$lib/ipc/games";
+  import { updateGameEvent, bulkUpdateEventType, getEventTypes, processSegment, mergeHighlights, finishGame, pruneRenders } from "$lib/ipc/games";
   import { log } from "$lib/stores/log.svelte";
+  import RenderPlaybackModal from "./RenderPlaybackModal.svelte";
 
   // Action state
   let actionLoading = $state<string | null>(null);
@@ -49,6 +50,13 @@
 
   // Event type filter — null means "all"
   let selectedEventType = $state<string | null>(null);
+
+  // Collapsible sections
+  let eventsExpanded = $state(true);
+  let rendersExpanded = $state(true);
+
+  // Render playback
+  let activeRender = $state<RenderEntry | null>(null);
 
   // Multi-select state
   let selectedEventIds = $state<Set<string>>(new Set());
@@ -224,372 +232,422 @@
       actionLoading = null;
     }
   }
+
+  async function handlePruneRenders() {
+    actionLoading = "prune";
+    actionError = "";
+    try {
+      const result = await pruneRenders(game.dir_path);
+      onUpdateGame?.(game.dir_path, (g) => ({ ...g, state: result.state }));
+      log.info("GameView", `Pruned ${result.cleared_entries} render entries, removed ${result.removed_files} files`);
+    } catch (err) {
+      actionError = String(err);
+      log.error("GameView", `Failed to prune renders: ${err}`);
+    } finally {
+      actionLoading = null;
+    }
+  }
 </script>
 
-<div class="space-y-5 h-full overflow-y-auto">
-  <!-- Back button -->
-  <button
-    class="text-sm text-text-muted hover:text-text transition-colors"
-    onclick={() => onBack?.()}
-  >
-    &larr; All Games
-  </button>
+<div class="flex flex-col h-full">
+  <!-- Fixed header: back, game info, actions, filters -->
+  <div class="shrink-0 space-y-4 pb-3">
+    <!-- Back button -->
+    <button
+      class="text-sm text-text-muted hover:text-text transition-colors"
+      onclick={() => onBack?.()}
+    >
+      &larr; All Games
+    </button>
 
-  <!-- Game Header -->
-  <div class="flex items-start justify-between">
-    <div>
-      <h2 class="text-xl font-bold">{info.home_team} vs {info.away_team}</h2>
-      <div class="flex items-center gap-3 mt-1 text-sm text-text-muted">
-        <span>{info.date}</span>
-        <span>{info.sport}</span>
-        {#if info.venue}
-          <span>{info.venue}</span>
+    <!-- Game Header -->
+    <div class="flex items-start justify-between">
+      <div>
+        <h2 class="text-xl font-bold">{info.home_team} vs {info.away_team}</h2>
+        <div class="flex items-center gap-3 mt-1 text-sm text-text-muted">
+          <span>{info.date}</span>
+          <span>{info.sport}</span>
+          {#if info.venue}
+            <span>{info.venue}</span>
+          {/if}
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        {#if gs.finished}
+          <span class="px-3 py-1 rounded-full bg-green-900 text-green-300 text-sm">Finished</span>
+        {:else}
+          <span class="px-3 py-1 rounded-full bg-blue-900 text-secondary text-sm">In Progress</span>
         {/if}
       </div>
     </div>
-    <div class="flex items-center gap-2">
-      {#if gs.finished}
-        <span class="px-3 py-1 rounded-full bg-green-900 text-green-300 text-sm">Finished</span>
-      {:else}
-        <span class="px-3 py-1 rounded-full bg-blue-900 text-secondary text-sm">In Progress</span>
-      {/if}
-    </div>
-  </div>
 
-  <!-- Game Actions -->
-  {#if !gs.finished}
+    <!-- Game Actions -->
+    {#if !gs.finished}
+      <div>
+        <h3 class="text-sm font-semibold uppercase tracking-wider text-text-muted mb-2">Actions</h3>
+        {#if actionError}
+          <div class="mb-2 px-3 py-2 bg-red-900/30 border border-red-800 rounded-lg text-sm text-red-300">
+            {actionError}
+          </div>
+        {/if}
+        <div class="flex gap-2 flex-wrap">
+          {#if !gs.finished}
+            {@const maxProcessed = gs.segments_processed.length > 0 ? Math.max(...gs.segments_processed) : 0}
+            {@const nextSeg = maxProcessed + 1}
+            <button
+              class="px-3 py-1.5 bg-surface border border-border rounded-lg text-sm hover:bg-surface-hover transition-colors disabled:opacity-50"
+              disabled={actionLoading !== null}
+              onclick={() => handleProcessSegment(nextSeg)}
+            >
+              {actionLoading === `process-${nextSeg}` ? "Processing..." : `Process Segment ${nextSeg}`}
+            </button>
+          {/if}
+
+          {#if gs.segments_processed.length > 0 && !gs.highlighted}
+            <button
+              class="px-3 py-1.5 bg-secondary/20 border border-secondary rounded-lg text-sm text-secondary hover:bg-secondary/30 transition-colors disabled:opacity-50"
+              disabled={actionLoading !== null}
+              onclick={handleMergeHighlights}
+            >
+              {actionLoading === "merge" ? "Merging..." : "Merge Highlights"}
+            </button>
+          {/if}
+
+          <button
+            class="px-3 py-1.5 bg-green-900/30 border border-green-800 rounded-lg text-sm text-green-300 hover:bg-green-900/50 transition-colors disabled:opacity-50"
+            disabled={actionLoading !== null}
+            onclick={handleFinishGame}
+          >
+            {actionLoading === "finish" ? "Finishing..." : "Finish Game"}
+          </button>
+        </div>
+      </div>
+    {/if}
+
+    <!-- Segment Filter Pills -->
     <div>
-      <h3 class="text-sm font-semibold uppercase tracking-wider text-text-muted mb-2">Actions</h3>
-      {#if actionError}
-        <div class="mb-2 px-3 py-2 bg-red-900/30 border border-red-800 rounded-lg text-sm text-red-300">
-          {actionError}
+      <h3 class="text-sm font-semibold uppercase tracking-wider text-text-muted mb-2">Segments</h3>
+      {#if gs.segments_processed.length === 0}
+        <p class="text-text-muted text-sm">No segments processed yet.</p>
+      {:else}
+        <div class="flex gap-2 flex-wrap">
+          <button
+            class="px-3 py-1 rounded text-sm font-medium transition-colors"
+            class:bg-secondary={selectedSegment === null}
+            class:text-bg={selectedSegment === null}
+            class:bg-surface={selectedSegment !== null}
+            class:text-text-muted={selectedSegment !== null}
+            class:hover:bg-surface-hover={selectedSegment !== null}
+            onclick={() => (selectedSegment = null)}
+          >
+            All
+          </button>
+          {#each gs.segments_processed as seg}
+            <button
+              class="px-3 py-1 rounded text-sm font-medium transition-colors"
+              class:bg-secondary={selectedSegment === seg}
+              class:text-bg={selectedSegment === seg}
+              class:bg-surface={selectedSegment !== seg}
+              class:text-text-muted={selectedSegment !== seg}
+              class:hover:bg-surface-hover={selectedSegment !== seg}
+              onclick={() => (selectedSegment = selectedSegment === seg ? null : seg)}
+            >
+              Segment {seg}
+            </button>
+          {/each}
         </div>
       {/if}
-      <div class="flex gap-2 flex-wrap">
-        <!-- Process next segment button: only the next unprocessed one -->
-        {#if !gs.finished}
-          {@const maxProcessed = gs.segments_processed.length > 0 ? Math.max(...gs.segments_processed) : 0}
-          {@const nextSeg = maxProcessed + 1}
-          <button
-            class="px-3 py-1.5 bg-surface border border-border rounded-lg text-sm hover:bg-surface-hover transition-colors disabled:opacity-50"
-            disabled={actionLoading !== null}
-            onclick={() => handleProcessSegment(nextSeg)}
-          >
-            {actionLoading === `process-${nextSeg}` ? "Processing..." : `Process Segment ${nextSeg}`}
-          </button>
-        {/if}
-
-        {#if gs.segments_processed.length > 0 && !gs.highlighted}
-          <button
-            class="px-3 py-1.5 bg-secondary/20 border border-secondary rounded-lg text-sm text-secondary hover:bg-secondary/30 transition-colors disabled:opacity-50"
-            disabled={actionLoading !== null}
-            onclick={handleMergeHighlights}
-          >
-            {actionLoading === "merge" ? "Merging..." : "Merge Highlights"}
-          </button>
-        {/if}
-
-        <button
-          class="px-3 py-1.5 bg-green-900/30 border border-green-800 rounded-lg text-sm text-green-300 hover:bg-green-900/50 transition-colors disabled:opacity-50"
-          disabled={actionLoading !== null}
-          onclick={handleFinishGame}
-        >
-          {actionLoading === "finish" ? "Finishing..." : "Finish Game"}
-        </button>
-      </div>
     </div>
-  {/if}
 
-  <!-- Segment Filter Pills -->
-  <div>
-    <h3 class="text-sm font-semibold uppercase tracking-wider text-text-muted mb-2">Segments</h3>
-    {#if gs.segments_processed.length === 0}
-      <p class="text-text-muted text-sm">No segments processed yet.</p>
-    {:else}
-      <div class="flex gap-2 flex-wrap">
-        <button
-          class="px-3 py-1 rounded text-sm font-medium transition-colors"
-          class:bg-secondary={selectedSegment === null}
-          class:text-bg={selectedSegment === null}
-          class:bg-surface={selectedSegment !== null}
-          class:text-text-muted={selectedSegment !== null}
-          class:hover:bg-surface-hover={selectedSegment !== null}
-          onclick={() => (selectedSegment = null)}
-        >
-          All
-        </button>
-        {#each gs.segments_processed as seg}
+    <!-- Event Type Filter Pills -->
+    {#if knownEventTypes.length > 0}
+      <div>
+        <h3 class="text-sm font-semibold uppercase tracking-wider text-text-muted mb-2">Event Types</h3>
+        <div class="flex gap-2 flex-wrap">
           <button
             class="px-3 py-1 rounded text-sm font-medium transition-colors"
-            class:bg-secondary={selectedSegment === seg}
-            class:text-bg={selectedSegment === seg}
-            class:bg-surface={selectedSegment !== seg}
-            class:text-text-muted={selectedSegment !== seg}
-            class:hover:bg-surface-hover={selectedSegment !== seg}
-            onclick={() => (selectedSegment = selectedSegment === seg ? null : seg)}
+            class:bg-secondary={selectedEventType === null}
+            class:text-bg={selectedEventType === null}
+            class:bg-surface={selectedEventType !== null}
+            class:text-text-muted={selectedEventType !== null}
+            class:hover:bg-surface-hover={selectedEventType !== null}
+            onclick={() => (selectedEventType = null)}
           >
-            Segment {seg}
+            All
           </button>
-        {/each}
-      </div>
-    {/if}
-  </div>
-
-  <!-- Event Type Filter Pills -->
-  {#if knownEventTypes.length > 0}
-    <div>
-      <h3 class="text-sm font-semibold uppercase tracking-wider text-text-muted mb-2">Event Types</h3>
-      <div class="flex gap-2 flex-wrap">
-        <button
-          class="px-3 py-1 rounded text-sm font-medium transition-colors"
-          class:bg-secondary={selectedEventType === null}
-          class:text-bg={selectedEventType === null}
-          class:bg-surface={selectedEventType !== null}
-          class:text-text-muted={selectedEventType !== null}
-          class:hover:bg-surface-hover={selectedEventType !== null}
-          onclick={() => (selectedEventType = null)}
-        >
-          All
-        </button>
-        {#each knownEventTypes as et}
-          <button
-            class="px-3 py-1 rounded text-sm font-medium transition-colors"
-            class:bg-secondary={selectedEventType === et}
-            class:text-bg={selectedEventType === et}
-            class:bg-surface={selectedEventType !== et}
-            class:text-text-muted={selectedEventType !== et}
-            class:hover:bg-surface-hover={selectedEventType !== et}
-            onclick={() => (selectedEventType = selectedEventType === et ? null : et)}
-          >
-            {et}
-          </button>
-        {/each}
-      </div>
-    </div>
-  {/if}
-
-  <!-- Events Table -->
-  <div>
-    <h3 class="text-sm font-semibold uppercase tracking-wider text-text-muted mb-2">
-      Events ({filteredEvents.length}{selectedSegment !== null || selectedEventType !== null ? ` of ${gs.events.length}` : ""})
-    </h3>
-    <!-- Bulk tag bar -->
-    {#if selectedEventIds.size > 0}
-      <div class="flex items-center gap-3 mb-2 px-3 py-2 bg-primary/20 border border-primary rounded-lg">
-        <span class="text-sm text-text">{selectedEventIds.size} selected</span>
-        <select
-          bind:value={bulkTagType}
-          class="px-2 py-1 bg-bg border border-border rounded text-sm text-text"
-        >
-          <option value="">Select type...</option>
           {#each knownEventTypes as et}
-            <option value={et}>{et}</option>
+            <button
+              class="px-3 py-1 rounded text-sm font-medium transition-colors"
+              class:bg-secondary={selectedEventType === et}
+              class:text-bg={selectedEventType === et}
+              class:bg-surface={selectedEventType !== et}
+              class:text-text-muted={selectedEventType !== et}
+              class:hover:bg-surface-hover={selectedEventType !== et}
+              onclick={() => (selectedEventType = selectedEventType === et ? null : et)}
+            >
+              {et}
+            </button>
           {/each}
-        </select>
-        <button
-          class="px-3 py-1 bg-secondary text-bg rounded text-sm font-medium transition-colors hover:bg-secondary/80 disabled:opacity-50"
-          onclick={handleBulkTag}
-          disabled={bulkTagLoading || !bulkTagType.trim()}
-        >
-          {bulkTagLoading ? "Tagging..." : "Tag Selected"}
-        </button>
-        <button
-          class="px-3 py-1 text-text-muted hover:text-text text-sm transition-colors"
-          onclick={clearSelection}
-        >
-          Clear
-        </button>
-      </div>
-    {/if}
-
-    {#if gs.events.length === 0}
-      <p class="text-text-muted text-sm">No events recorded.</p>
-    {:else}
-      <div class="bg-surface rounded-lg border border-border overflow-hidden">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="border-b border-border text-text-muted text-left">
-              <th class="w-8 px-2 py-2">
-                <input
-                  type="checkbox"
-                  checked={filteredEvents.length > 0 && filteredEvents.every((e) => selectedEventIds.has(e.id))}
-                  onchange={() => {
-                    if (filteredEvents.every((e) => selectedEventIds.has(e.id))) {
-                      const newSet = new Set(selectedEventIds);
-                      for (const e of filteredEvents) newSet.delete(e.id);
-                      selectedEventIds = newSet;
-                    } else {
-                      const newSet = new Set(selectedEventIds);
-                      for (const e of filteredEvents) newSet.add(e.id);
-                      selectedEventIds = newSet;
-                    }
-                  }}
-                  class="rounded"
-                />
-              </th>
-              <th class="px-3 py-2 cursor-pointer hover:text-text select-none" onclick={() => toggleSort("event_type")}>
-                Type{sortIndicator("event_type")}
-              </th>
-              <th class="px-3 py-2 cursor-pointer hover:text-text select-none" onclick={() => toggleSort("player")}>
-                Player{sortIndicator("player")}
-              </th>
-              <th class="px-3 py-2 cursor-pointer hover:text-text select-none" onclick={() => toggleSort("segment_number")}>
-                Segment{sortIndicator("segment_number")}
-              </th>
-              <th class="px-3 py-2 cursor-pointer hover:text-text select-none" onclick={() => toggleSort("clip")}>
-                Clip{sortIndicator("clip")}
-              </th>
-              <th class="px-3 py-2 cursor-pointer hover:text-text select-none" onclick={() => toggleSort("created_at")}>
-                Created{sortIndicator("created_at")}
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each filteredEvents as event, index (event.id)}
-              <tr
-                class="border-b border-border last:border-0 transition-colors cursor-pointer {selectedEventIds.has(event.id) && activeEventId !== event.id ? 'bg-secondary/10' : ''}"
-                class:bg-primary={activeEventId === event.id}
-                class:hover:bg-surface-hover={activeEventId !== event.id}
-                onclick={() => selectEvent(event)}
-              >
-                <!-- Checkbox -->
-                <td class="w-8 px-2 py-2" onclick={(e) => e.stopPropagation()}>
-                  <input
-                    type="checkbox"
-                    checked={selectedEventIds.has(event.id)}
-                    onclick={(e) => toggleCheckbox(event, index, e.shiftKey)}
-                    class="rounded"
-                  />
-                </td>
-                <!-- Type (combobox) -->
-                <td class="px-3 py-2 font-medium">
-                  {#if editingCell?.eventId === event.id && editingCell.field === "event_type"}
-                    <div class="relative" onclick={(e) => e.stopPropagation()}>
-                      <!-- svelte-ignore a11y_autofocus -->
-                      <input
-                        type="text"
-                        bind:value={editValue}
-                        class="w-full px-1 py-0.5 bg-bg border border-secondary rounded text-sm text-text focus:outline-none"
-                        onkeydown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") cancelEdit(); }}
-                        onfocus={() => (showSuggestions = true)}
-                        onblur={() => { setTimeout(() => { showSuggestions = false; commitEdit(); }, 150); }}
-                        autofocus
-                      />
-                      {#if showSuggestions && filteredSuggestions.length > 0}
-                        <div class="absolute z-10 top-full left-0 right-0 mt-1 bg-surface border border-border rounded-lg shadow-lg py-1 max-h-32 overflow-y-auto">
-                          {#each filteredSuggestions as suggestion}
-                            <button
-                              class="w-full text-left px-2 py-1 text-sm hover:bg-surface-hover transition-colors"
-                              onmousedown={() => selectSuggestion(suggestion)}
-                            >
-                              {suggestion}
-                            </button>
-                          {/each}
-                        </div>
-                      {/if}
-                    </div>
-                  {:else}
-                    <span
-                      class="hover:underline hover:decoration-dotted cursor-text"
-                      ondblclick={(e) => { e.stopPropagation(); startEdit(event, "event_type"); }}
-                    >
-                      {event.event_type || "clip"}
-                    </span>
-                  {/if}
-                </td>
-
-                <!-- Player -->
-                <td class="px-3 py-2">
-                  {#if editingCell?.eventId === event.id && editingCell.field === "player"}
-                    <!-- svelte-ignore a11y_autofocus -->
-                    <input
-                      type="text"
-                      bind:value={editValue}
-                      class="w-full px-1 py-0.5 bg-bg border border-secondary rounded text-sm text-text focus:outline-none"
-                      onkeydown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") cancelEdit(); }}
-                      onblur={commitEdit}
-                      onclick={(e) => e.stopPropagation()}
-                      autofocus
-                    />
-                  {:else}
-                    <span
-                      class="hover:underline hover:decoration-dotted cursor-text"
-                      ondblclick={(e) => { e.stopPropagation(); startEdit(event, "player"); }}
-                    >
-                      {event.player || "-"}
-                    </span>
-                  {/if}
-                </td>
-
-                <!-- Segment -->
-                <td class="px-3 py-2">{event.segment_number}</td>
-
-                <!-- Clip (editable) -->
-                <td class="px-3 py-2 max-w-64">
-                  {#if editingCell?.eventId === event.id && editingCell.field === "clip"}
-                    <!-- svelte-ignore a11y_autofocus -->
-                    <input
-                      type="text"
-                      bind:value={editValue}
-                      class="w-full px-1 py-0.5 bg-bg border border-secondary rounded text-sm text-text focus:outline-none"
-                      onkeydown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") cancelEdit(); }}
-                      onblur={commitEdit}
-                      onclick={(e) => e.stopPropagation()}
-                      autofocus
-                    />
-                  {:else}
-                    <span
-                      class="text-text-muted truncate block hover:underline hover:decoration-dotted cursor-text"
-                      title={event.clip}
-                      ondblclick={(e) => { e.stopPropagation(); startEdit(event, "clip"); }}
-                    >
-                      {event.clip.split("/").pop() || event.clip}
-                    </span>
-                  {/if}
-                </td>
-
-                <!-- Created -->
-                <td class="px-3 py-2 text-text-muted">{event.created_at || "-"}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
+        </div>
       </div>
     {/if}
   </div>
 
-  <!-- Renders -->
-  <div>
-    <h3 class="text-sm font-semibold uppercase tracking-wider text-text-muted mb-2">
-      Renders ({gs.renders.length})
-    </h3>
-    {#if gs.renders.length === 0}
-      <p class="text-text-muted text-sm">No renders yet.</p>
-    {:else}
-      <div class="bg-surface rounded-lg border border-border overflow-hidden">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="border-b border-border text-text-muted text-left">
-              <th class="px-3 py-2">Format</th>
-              <th class="px-3 py-2">Segment</th>
-              <th class="px-3 py-2">Crop</th>
-              <th class="px-3 py-2">Output</th>
-              <th class="px-3 py-2">Date</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each gs.renders as render}
-              <tr class="border-b border-border last:border-0 hover:bg-surface-hover">
-                <td class="px-3 py-2 font-medium">{render.format}</td>
-                <td class="px-3 py-2">{render.segment_number}</td>
-                <td class="px-3 py-2">{render.crop_mode}</td>
-                <td class="px-3 py-2 text-text-muted truncate max-w-48">{render.output}</td>
-                <td class="px-3 py-2 text-text-muted">{render.rendered_at}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
+  <!-- Scrollable: events + renders as collapsible sections -->
+  <div class="flex-1 overflow-y-auto min-h-0 space-y-4">
+    <!-- Events (collapsible) -->
+    <div>
+      <button
+        class="w-full text-left text-sm font-semibold uppercase tracking-wider text-text-muted hover:text-text transition-colors flex items-center gap-1.5 mb-2"
+        onclick={() => eventsExpanded = !eventsExpanded}
+      >
+        <span class="transition-transform text-xs" class:rotate-90={eventsExpanded}>&#9654;</span>
+        Events ({filteredEvents.length}{selectedSegment !== null || selectedEventType !== null ? ` of ${gs.events.length}` : ""})
+      </button>
+
+      {#if eventsExpanded}
+        <!-- Bulk tag bar -->
+        {#if selectedEventIds.size > 0}
+          <div class="flex items-center gap-3 mb-2 px-3 py-2 bg-primary/20 border border-primary rounded-lg">
+            <span class="text-sm text-text">{selectedEventIds.size} selected</span>
+            <select
+              bind:value={bulkTagType}
+              class="px-2 py-1 bg-bg border border-border rounded text-sm text-text"
+            >
+              <option value="">Select type...</option>
+              {#each knownEventTypes as et}
+                <option value={et}>{et}</option>
+              {/each}
+            </select>
+            <button
+              class="px-3 py-1 bg-secondary text-bg rounded text-sm font-medium transition-colors hover:bg-secondary/80 disabled:opacity-50"
+              onclick={handleBulkTag}
+              disabled={bulkTagLoading || !bulkTagType.trim()}
+            >
+              {bulkTagLoading ? "Tagging..." : "Tag Selected"}
+            </button>
+            <button
+              class="px-3 py-1 text-text-muted hover:text-text text-sm transition-colors"
+              onclick={clearSelection}
+            >
+              Clear
+            </button>
+          </div>
+        {/if}
+
+        {#if gs.events.length === 0}
+          <p class="text-text-muted text-sm">No events recorded.</p>
+        {:else}
+          <div class="bg-surface rounded-lg border border-border overflow-hidden">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="border-b border-border text-text-muted text-left">
+                  <th class="w-8 px-2 py-2">
+                    <input
+                      type="checkbox"
+                      checked={filteredEvents.length > 0 && filteredEvents.every((e) => selectedEventIds.has(e.id))}
+                      onchange={() => {
+                        if (filteredEvents.every((e) => selectedEventIds.has(e.id))) {
+                          const newSet = new Set(selectedEventIds);
+                          for (const e of filteredEvents) newSet.delete(e.id);
+                          selectedEventIds = newSet;
+                        } else {
+                          const newSet = new Set(selectedEventIds);
+                          for (const e of filteredEvents) newSet.add(e.id);
+                          selectedEventIds = newSet;
+                        }
+                      }}
+                      class="rounded"
+                    />
+                  </th>
+                  <th class="px-3 py-2 cursor-pointer hover:text-text select-none" onclick={() => toggleSort("event_type")}>
+                    Type{sortIndicator("event_type")}
+                  </th>
+                  <th class="px-3 py-2 cursor-pointer hover:text-text select-none" onclick={() => toggleSort("player")}>
+                    Player{sortIndicator("player")}
+                  </th>
+                  <th class="px-3 py-2 cursor-pointer hover:text-text select-none" onclick={() => toggleSort("segment_number")}>
+                    Segment{sortIndicator("segment_number")}
+                  </th>
+                  <th class="px-3 py-2 cursor-pointer hover:text-text select-none" onclick={() => toggleSort("clip")}>
+                    Clip{sortIndicator("clip")}
+                  </th>
+                  <th class="px-3 py-2 cursor-pointer hover:text-text select-none" onclick={() => toggleSort("created_at")}>
+                    Created{sortIndicator("created_at")}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each filteredEvents as event, index (event.id)}
+                  <tr
+                    class="border-b border-border last:border-0 transition-colors cursor-pointer {selectedEventIds.has(event.id) && activeEventId !== event.id ? 'bg-secondary/10' : ''}"
+                    class:bg-primary={activeEventId === event.id}
+                    class:hover:bg-surface-hover={activeEventId !== event.id}
+                    onclick={() => selectEvent(event)}
+                  >
+                    <!-- Checkbox -->
+                    <td class="w-8 px-2 py-2" onclick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedEventIds.has(event.id)}
+                        onclick={(e) => toggleCheckbox(event, index, e.shiftKey)}
+                        class="rounded"
+                      />
+                    </td>
+                    <!-- Type (combobox) -->
+                    <td class="px-3 py-2 font-medium">
+                      {#if editingCell?.eventId === event.id && editingCell.field === "event_type"}
+                        <div class="relative" onclick={(e) => e.stopPropagation()}>
+                          <!-- svelte-ignore a11y_autofocus -->
+                          <input
+                            type="text"
+                            bind:value={editValue}
+                            class="w-full px-1 py-0.5 bg-bg border border-secondary rounded text-sm text-text focus:outline-none"
+                            onkeydown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") cancelEdit(); }}
+                            onfocus={() => (showSuggestions = true)}
+                            onblur={() => { setTimeout(() => { showSuggestions = false; commitEdit(); }, 150); }}
+                            autofocus
+                          />
+                          {#if showSuggestions && filteredSuggestions.length > 0}
+                            <div class="absolute z-10 top-full left-0 right-0 mt-1 bg-surface border border-border rounded-lg shadow-lg py-1 max-h-32 overflow-y-auto">
+                              {#each filteredSuggestions as suggestion}
+                                <button
+                                  class="w-full text-left px-2 py-1 text-sm hover:bg-surface-hover transition-colors"
+                                  onmousedown={() => selectSuggestion(suggestion)}
+                                >
+                                  {suggestion}
+                                </button>
+                              {/each}
+                            </div>
+                          {/if}
+                        </div>
+                      {:else}
+                        <span
+                          class="hover:underline hover:decoration-dotted cursor-text"
+                          ondblclick={(e) => { e.stopPropagation(); startEdit(event, "event_type"); }}
+                        >
+                          {event.event_type || "clip"}
+                        </span>
+                      {/if}
+                    </td>
+
+                    <!-- Player -->
+                    <td class="px-3 py-2">
+                      {#if editingCell?.eventId === event.id && editingCell.field === "player"}
+                        <!-- svelte-ignore a11y_autofocus -->
+                        <input
+                          type="text"
+                          bind:value={editValue}
+                          class="w-full px-1 py-0.5 bg-bg border border-secondary rounded text-sm text-text focus:outline-none"
+                          onkeydown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") cancelEdit(); }}
+                          onblur={commitEdit}
+                          onclick={(e) => e.stopPropagation()}
+                          autofocus
+                        />
+                      {:else}
+                        <span
+                          class="hover:underline hover:decoration-dotted cursor-text"
+                          ondblclick={(e) => { e.stopPropagation(); startEdit(event, "player"); }}
+                        >
+                          {event.player || "-"}
+                        </span>
+                      {/if}
+                    </td>
+
+                    <!-- Segment -->
+                    <td class="px-3 py-2">{event.segment_number}</td>
+
+                    <!-- Clip (editable) -->
+                    <td class="px-3 py-2 max-w-64">
+                      {#if editingCell?.eventId === event.id && editingCell.field === "clip"}
+                        <!-- svelte-ignore a11y_autofocus -->
+                        <input
+                          type="text"
+                          bind:value={editValue}
+                          class="w-full px-1 py-0.5 bg-bg border border-secondary rounded text-sm text-text focus:outline-none"
+                          onkeydown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") cancelEdit(); }}
+                          onblur={commitEdit}
+                          onclick={(e) => e.stopPropagation()}
+                          autofocus
+                        />
+                      {:else}
+                        <span
+                          class="text-text-muted truncate block hover:underline hover:decoration-dotted cursor-text"
+                          title={event.clip}
+                          ondblclick={(e) => { e.stopPropagation(); startEdit(event, "clip"); }}
+                        >
+                          {event.clip.split("/").pop() || event.clip}
+                        </span>
+                      {/if}
+                    </td>
+
+                    <!-- Created -->
+                    <td class="px-3 py-2 text-text-muted">{event.created_at || "-"}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
+      {/if}
+    </div>
+
+    <!-- Renders (collapsible) -->
+    <div>
+      <div class="flex items-center gap-2 mb-2">
+        <button
+          class="text-left text-sm font-semibold uppercase tracking-wider text-text-muted hover:text-text transition-colors flex items-center gap-1.5"
+          onclick={() => rendersExpanded = !rendersExpanded}
+        >
+          <span class="transition-transform text-xs" class:rotate-90={rendersExpanded}>&#9654;</span>
+          Renders ({gs.renders.length})
+        </button>
+        {#if gs.renders.length > 0}
+          <button
+            class="ml-auto px-2 py-0.5 text-[11px] text-text-muted hover:text-accent transition-colors disabled:opacity-50"
+            disabled={actionLoading !== null}
+            onclick={handlePruneRenders}
+            title="Remove render files and clear history"
+          >
+            {actionLoading === "prune" ? "Pruning..." : "Prune"}
+          </button>
+        {/if}
       </div>
-    {/if}
+
+      {#if rendersExpanded}
+        {#if gs.renders.length === 0}
+          <p class="text-text-muted text-sm">No renders yet.</p>
+        {:else}
+          <div class="bg-surface rounded-lg border border-border overflow-hidden">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="border-b border-border text-text-muted text-left">
+                  <th class="px-3 py-2">Format</th>
+                  <th class="px-3 py-2">Segment</th>
+                  <th class="px-3 py-2">Crop</th>
+                  <th class="px-3 py-2">Output</th>
+                  <th class="px-3 py-2">Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each gs.renders as render}
+                  <tr class="border-b border-border last:border-0 hover:bg-surface-hover cursor-pointer" onclick={() => activeRender = render}>
+                    <td class="px-3 py-2 font-medium">{render.format}</td>
+                    <td class="px-3 py-2">{render.segment_number}</td>
+                    <td class="px-3 py-2">{render.crop_mode}</td>
+                    <td class="px-3 py-2 text-text-muted truncate max-w-48">{render.output}</td>
+                    <td class="px-3 py-2 text-text-muted">{render.rendered_at}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
+      {/if}
+    </div>
   </div>
 </div>
+
+{#if activeRender}
+  <RenderPlaybackModal render={activeRender} onClose={() => activeRender = null} />
+{/if}

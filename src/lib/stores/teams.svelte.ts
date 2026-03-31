@@ -25,6 +25,13 @@ export function updateTeamInMap(profile: TeamProfile): void {
   teamMap = newMap;
 }
 
+/** Remove a team from the lookup map (call after delete). */
+export function removeTeamFromMap(teamName: string): void {
+  const newMap = new Map(teamMap);
+  newMap.delete(teamName.toLowerCase());
+  teamMap = newMap;
+}
+
 /** Load all team profiles from all levels into the lookup map. */
 export async function loadAllTeams(): Promise<void> {
   try {

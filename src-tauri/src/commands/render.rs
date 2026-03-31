@@ -192,21 +192,45 @@ pub async fn render_preview(
     state: State<'_, AppState>,
     input_clip: String,
     output_dir: String,
+    profile_name: Option<String>,
 ) -> Result<String, String> {
     let backend = state.media_backend.clone();
+    let config = state
+        .config
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
     let input = PathBuf::from(&input_clip);
     let out_dir = PathBuf::from(&output_dir);
+    let pname = profile_name;
 
     let job_id = uuid::Uuid::new_v4().to_string();
     let reporter = ProgressReporter::new(app, job_id);
 
     let result = tokio::task::spawn_blocking(move || {
-        render_ops::render_preview(&backend, &input, &out_dir, Some(&reporter))
+        render_ops::render_preview(
+            &backend,
+            &input,
+            &out_dir,
+            config.as_ref(),
+            pname.as_deref(),
+            Some(&reporter),
+        )
     })
     .await
     .map_err(|e| e.to_string())?;
 
     result.map(|p| p.display().to_string())
+}
+
+#[tauri::command]
+pub fn delete_preview(path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if p.exists() {
+        std::fs::remove_file(p).map_err(|e| e.to_string())
+    } else {
+        Ok(())
+    }
 }
 
 #[tauri::command]

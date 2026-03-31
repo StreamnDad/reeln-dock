@@ -6,9 +6,15 @@
   import type { RenderOverrides, IterationItem } from "$lib/types/render";
   import { probeClip, openInFinder } from "$lib/ipc/media";
   import { updateGameEvent, quickTagEvent } from "$lib/ipc/games";
-  import { renderShort, renderIteration, renderPreview, listRenderProfiles } from "$lib/ipc/render";
+  import { loadTeamRoster, type RosterEntry } from "$lib/ipc/teams";
+  import { renderShort, renderIteration, renderPreview, deletePreview, listRenderProfiles } from "$lib/ipc/render";
+  import { listConfigProfiles } from "$lib/ipc/plugins";
+  import type { ConfigProfile } from "$lib/types/plugin";
+  import { addToQueue as addToRenderQueue } from "$lib/stores/renderQueue.svelte";
+  import { getDockSettings } from "$lib/stores/config.svelte";
   import { log } from "$lib/stores/log.svelte";
   import type { MediaInfoResponse } from "$lib/types/media";
+  import VideoPlayer from "./VideoPlayer.svelte";
 
   interface Props {
     event: GameEvent;
@@ -47,6 +53,8 @@
 
   // Render profiles
   let renderProfiles = $state<RenderProfile[]>([]);
+  let pluginProfiles = $state<ConfigProfile[]>([]);
+  let selectedPluginProfile = $state("");
   let renderQueue = $state<IterationItem[]>([]);
   let concatOutput = $state(true);
   let addProfileName = $state("");
@@ -57,6 +65,17 @@
   let renderSuccess = $state("");
   let dragIndex = $state<number | null>(null);
   let dragOverIndex = $state<number | null>(null);
+
+  // Preview state
+  let previewPath = $state<string | null>(null);
+  let previewProfileName = $state("");
+
+  // Queue state
+  let queueAdded = $state(false);
+
+  // Roster data for player assignment
+  let homeRoster = $state<RosterEntry[]>([]);
+  let awayRoster = $state<RosterEntry[]>([]);
 
 
   // Load profiles
@@ -69,16 +88,61 @@
         }
       })
       .catch(() => {});
+    listConfigProfiles()
+      .then((p) => { pluginProfiles = p; })
+      .catch(() => {});
+    // Set default plugin profile from dock settings
+    const dockDefault = getDockSettings().rendering?.default_plugin_profile;
+    if (dockDefault) {
+      selectedPluginProfile = dockDefault;
+    }
   });
 
-  // Auto-populate queue from iteration mappings when event type changes
+  // Load rosters for home and away teams
+  $effect(() => {
+    const info = game.state.game_info;
+    if (info.home_team && info.level) {
+      loadTeamRoster(info.home_team, info.level)
+        .then((r) => { homeRoster = r; })
+        .catch(() => { homeRoster = []; });
+    }
+    if (info.away_team && info.level) {
+      loadTeamRoster(info.away_team, info.level)
+        .then((r) => { awayRoster = r; })
+        .catch(() => { awayRoster = []; });
+    }
+  });
+
+  // Auto-populate queue from dock rendering defaults, then config iteration mappings
   $effect(() => {
     const eventType = event.event_type || "default";
-    const profileNames = iterationMappings[eventType] ?? iterationMappings["default"] ?? [];
+    const dockRendering = getDockSettings().rendering;
+    const dockMappings = dockRendering?.iteration_mappings ?? {};
+    // Dock overrides take priority over config iteration mappings
+    const effectiveMappings = Object.keys(dockMappings).length > 0
+      ? { ...iterationMappings, ...dockMappings }
+      : iterationMappings;
+    const profileNames = effectiveMappings[eventType] ?? effectiveMappings["default"] ?? [];
     if (profileNames.length > 0) {
       renderQueue = profileNames.map((name) => ({ profile_name: name }));
+      previewProfileName = profileNames[0] ?? "";
     } else if (renderProfiles.length > 0) {
       renderQueue = [{ profile_name: renderProfiles[0].name }];
+      previewProfileName = renderProfiles[0].name;
+    }
+    // Apply default concat setting from dock
+    if (dockRendering?.concat_by_default != null) {
+      concatOutput = dockRendering.concat_by_default;
+    }
+    // Apply default render overrides from dock
+    const dockOverrides = dockRendering?.overrides;
+    if (dockOverrides) {
+      overrides = {
+        crop_mode: dockOverrides.crop_mode,
+        scale: dockOverrides.scale,
+        speed: dockOverrides.speed,
+        smart: dockOverrides.smart,
+      };
     }
   });
 
@@ -96,6 +160,38 @@
     typeof event.metadata?.team === "string" ? event.metadata.team : null,
   );
 
+  // Player assignment from metadata
+  let currentScorer = $derived(
+    typeof event.metadata?.scorer === "string" ? event.metadata.scorer : "",
+  );
+  let currentAssist1 = $derived(
+    typeof event.metadata?.assist1 === "string" ? event.metadata.assist1 : "",
+  );
+  let currentAssist2 = $derived(
+    typeof event.metadata?.assist2 === "string" ? event.metadata.assist2 : "",
+  );
+
+  // Combined roster: team-specific if tagged, otherwise both teams
+  let activeRoster = $derived.by(() => {
+    if (currentTeam === "home") return homeRoster;
+    if (currentTeam === "away") return awayRoster;
+    // Merge both rosters, sorted by name
+    return [...homeRoster, ...awayRoster].sort((a, b) => a.name.localeCompare(b.name));
+  });
+
+  function playerLabel(entry: RosterEntry): string {
+    return entry.number ? `#${entry.number} ${entry.name}` : entry.name;
+  }
+
+  async function updatePlayerField(field: string, value: string) {
+    try {
+      const newState = await updateGameEvent(game.dir_path, event.id, field, value);
+      onUpdateGame?.(game.dir_path, (g) => ({ ...g, state: newState }));
+    } catch (err) {
+      log.error("ClipReview", `Failed to update ${field}: ${err}`);
+    }
+  }
+
   // Suggestions for inline editing
   let knownEventTypes = $derived(
     [...new Set([...eventTypes.map((e) => e.name), ...game.state.events.map((e) => e.event_type).filter(Boolean)])].sort(),
@@ -110,6 +206,11 @@
     const clipPath = fullClipPath;
     probeInfo = null;
     videoError = false;
+    // Clean up any active preview when navigating to a different clip
+    if (previewPath) {
+      deletePreview(previewPath).catch(() => {});
+      previewPath = null;
+    }
     probeClip(clipPath)
       .then((result) => { probeInfo = result; })
       .catch(() => {});
@@ -267,15 +368,47 @@
     renderLoading = true;
     renderError = "";
     renderSuccess = "";
+    // Clean up any existing preview first
+    if (previewPath) {
+      await deletePreview(previewPath).catch(() => {});
+      previewPath = null;
+    }
     try {
       const outputDir = game.dir_path + "/previews";
-      const output = await renderPreview(fullClipPath, outputDir);
-      renderSuccess = `Preview: ${fileName(output)}`;
+      const profileForPreview = previewProfileName || renderQueue[0]?.profile_name || undefined;
+      const output = await renderPreview(fullClipPath, outputDir, profileForPreview);
+      previewPath = output;
+      renderSuccess = "";
     } catch (err) {
       renderError = String(err);
     } finally {
       renderLoading = false;
     }
+  }
+
+  async function closePreview() {
+    if (previewPath) {
+      await deletePreview(previewPath).catch(() => {});
+      previewPath = null;
+    }
+  }
+
+  function handleAddToQueue() {
+    if (renderQueue.length === 0) return;
+    const info = game.state.game_info;
+    addToRenderQueue({
+      gameDir: game.dir_path,
+      gameName: `${info.home_team} vs ${info.away_team}`,
+      eventId: event.id,
+      clipPath: fullClipPath,
+      clipName: fileName(event.clip),
+      profiles: [...renderQueue],
+      concatOutput: concatOutput,
+      overrides: cleanOverrides(overrides),
+      pluginProfile: selectedPluginProfile || undefined,
+    });
+    queueAdded = true;
+    setTimeout(() => { queueAdded = false; }, 1500);
   }
 
   function profileLabel(name: string): string {
@@ -319,32 +452,48 @@
     </div>
   </div>
 
-  <!-- Video Player -->
-  <div class="rounded-lg border border-border bg-black overflow-hidden video-container">
-    {#if videoError}
-      <div class="aspect-video flex items-center justify-center bg-bg">
-        <div class="text-center p-4">
-          <span class="text-4xl text-text-muted">&#9888;</span>
-          <p class="text-accent text-sm mt-2">Could not load video</p>
-        </div>
+  <!-- Video Player / Preview -->
+  {#if previewPath}
+    <div class="rounded-lg border-2 border-secondary bg-black overflow-hidden relative">
+      <div class="absolute top-2 left-2 z-10 px-2 py-0.5 bg-secondary text-bg text-xs font-medium rounded">
+        Preview
       </div>
-    {:else}
-      {#key event.id}
-        <!-- svelte-ignore a11y_media_has_caption -->
-        <video
-          class="clip-video"
-          src={videoSrc}
-          controls
-          autoplay={autoPlay}
-          playsinline
-          preload="metadata"
-          onerror={() => { videoError = true; }}
-          onloadeddata={() => { videoError = false; }}
-          onended={handleVideoEnded}
-        ></video>
-      {/key}
-    {/if}
-  </div>
+      <VideoPlayer
+        src={convertFileSrc(previewPath)}
+        autoplay={true}
+      />
+      <button
+        class="absolute top-2 right-2 z-10 px-2 py-0.5 bg-bg/80 text-text-muted hover:text-text text-xs rounded transition-colors"
+        onclick={closePreview}
+      >Close Preview</button>
+    </div>
+  {:else}
+    <div class="rounded-lg border border-border bg-black overflow-hidden">
+      {#if videoError}
+        <div class="aspect-video flex items-center justify-center bg-bg">
+          <div class="text-center p-4 max-w-xs">
+            <span class="text-4xl text-text-muted">&#9888;</span>
+            <p class="text-accent text-sm mt-2">Could not load video</p>
+            <p class="text-text-muted text-xs mt-1 truncate" title={fullClipPath}>{fileName(event.clip)}</p>
+            <button
+              class="mt-2 px-2 py-1 text-xs text-text-muted hover:text-text bg-surface border border-border rounded transition-colors"
+              onclick={() => { if (autoAdvance) onNext?.(); }}
+            >Skip</button>
+          </div>
+        </div>
+      {:else}
+        {#key event.id}
+          <VideoPlayer
+            src={videoSrc}
+            autoplay={autoPlay}
+            onended={handleVideoEnded}
+            onerror={() => { videoError = true; }}
+            onloadeddata={() => { videoError = false; }}
+          />
+        {/key}
+      {/if}
+    </div>
+  {/if}
 
   <!-- Player controls -->
   <div class="flex items-center gap-3 text-sm">
@@ -408,6 +557,40 @@
     </div>
   {/if}
 
+  <!-- Player Assignment (scorer + assists) -->
+  {#if event.event_type}
+    <div class="space-y-1.5">
+      {#each [{ id: "scorer", label: "Scorer", value: currentScorer }, { id: "assist1", label: "Assist 1", value: currentAssist1 }, { id: "assist2", label: "Assist 2", value: currentAssist2 }] as field}
+        <div class="flex items-center gap-2">
+          <label class="text-xs text-text-muted w-14 shrink-0" for={field.id}>{field.label}</label>
+          {#if activeRoster.length > 0}
+            <select
+              id={field.id}
+              value={field.value}
+              onchange={(e) => updatePlayerField(field.id, (e.target as HTMLSelectElement).value)}
+              class="flex-1 px-2 py-1 bg-bg border border-border rounded text-xs text-text focus:outline-none focus:border-secondary"
+            >
+              <option value="">-</option>
+              {#each activeRoster as entry}
+                <option value={entry.name}>{playerLabel(entry)}</option>
+              {/each}
+            </select>
+          {:else}
+            <input
+              type="text"
+              id={field.id}
+              value={field.value}
+              placeholder="-"
+              onblur={(e) => updatePlayerField(field.id, (e.target as HTMLInputElement).value)}
+              onkeydown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              class="flex-1 px-2 py-1 bg-bg border border-border rounded text-xs text-text focus:outline-none focus:border-secondary"
+            />
+          {/if}
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   <!-- Collapsible: Render Options -->
   <button
     class="w-full text-left text-xs text-text-muted hover:text-text transition-colors flex items-center gap-1"
@@ -467,6 +650,23 @@
           <input type="checkbox" bind:checked={concatOutput} class="accent-secondary" />
           Concatenate into single output
         </label>
+      {/if}
+
+      <!-- Plugin profile -->
+      {#if pluginProfiles.length > 0}
+        <div>
+          <label class="block text-xs text-text-muted mb-1" for="clip-plugin-profile">Plugin Profile</label>
+          <select
+            id="clip-plugin-profile"
+            bind:value={selectedPluginProfile}
+            class="w-full px-2 py-1.5 bg-bg border border-border rounded-lg text-xs text-text focus:outline-none focus:border-secondary"
+          >
+            <option value="">None (no plugins)</option>
+            {#each pluginProfiles as pp}
+              <option value={pp.name}>{pp.name}</option>
+            {/each}
+          </select>
+        </div>
       {/if}
 
       <button
@@ -539,11 +739,32 @@
           {renderLoading ? "Rendering..." : renderQueue.length > 1 ? `Render ${renderQueue.length} Formats` : "Render Short"}
         </button>
         <button
-          class="px-3 py-2 bg-surface border border-border rounded-lg text-sm hover:bg-surface-hover transition-colors disabled:opacity-50 text-center"
+          class="px-3 py-2 bg-surface border border-border rounded-lg text-sm hover:bg-surface-hover transition-colors disabled:opacity-50 text-center whitespace-nowrap"
+          disabled={renderQueue.length === 0}
+          onclick={handleAddToQueue}
+        >
+          {queueAdded ? "Added" : "+ Queue"}
+        </button>
+      </div>
+      <!-- Preview with profile selector -->
+      <div class="flex gap-2 items-center">
+        {#if renderProfiles.length > 0}
+          <select
+            bind:value={previewProfileName}
+            class="flex-1 px-2 py-1.5 bg-bg border border-border rounded-lg text-xs text-text focus:outline-none focus:border-secondary"
+          >
+            <option value="">No profile (640p)</option>
+            {#each renderProfiles as profile}
+              <option value={profile.name}>{profileLabel(profile.name)}</option>
+            {/each}
+          </select>
+        {/if}
+        <button
+          class="px-3 py-1.5 bg-surface border border-border rounded-lg text-sm hover:bg-surface-hover transition-colors disabled:opacity-50 text-center whitespace-nowrap"
           disabled={renderLoading}
           onclick={handleRenderPreview}
         >
-          Preview
+          {renderLoading ? "..." : "Preview"}
         </button>
       </div>
     </div>
@@ -641,20 +862,3 @@
   {/if}
 </div>
 
-<style>
-  .clip-video {
-    display: block;
-    width: 100%;
-    max-width: none;
-  }
-  .video-container .clip-video:not(:hover) {
-    cursor: pointer;
-  }
-  .video-container .clip-video::-webkit-media-controls {
-    opacity: 0;
-    transition: opacity 0.2s;
-  }
-  .video-container .clip-video:hover::-webkit-media-controls {
-    opacity: 1;
-  }
-</style>

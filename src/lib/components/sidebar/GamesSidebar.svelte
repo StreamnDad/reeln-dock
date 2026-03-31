@@ -6,7 +6,7 @@
     type GameStatus,
   } from "$lib/stores/games";
   import type { AppContext } from "$lib/context";
-  import { getTournamentMetadata } from "$lib/stores/tournaments.svelte";
+  import { getTournamentMetadata, isArchived } from "$lib/stores/tournaments.svelte";
   import { getDockSettings, setDockSettings } from "$lib/stores/config.svelte";
   import { saveDockSettings } from "$lib/ipc/config";
   import { isDragging, getDropTarget, setDropTarget } from "$lib/stores/drag.svelte";
@@ -26,7 +26,7 @@
   let dockSettings = $derived(getDockSettings());
 
   let archivedNames = $derived(
-    new Set(tournamentMeta.filter((m) => m.archived).map((m) => m.name)),
+    new Set(tournamentMeta.filter((m) => isArchived(m.name)).map((m) => m.name)),
   );
 
   // Compute levels and counts from context games (reactive via $state getter)

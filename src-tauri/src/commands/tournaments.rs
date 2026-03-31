@@ -59,6 +59,9 @@ pub fn set_tournament_archived(
         name: name.clone(),
         archived: false,
         notes: String::new(),
+        start_date: String::new(),
+        end_date: String::new(),
+        url: String::new(),
     });
     entry.archived = archived;
     let result = entry.clone();

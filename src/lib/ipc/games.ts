@@ -69,6 +69,19 @@ export async function finishGame(
   return invoke<GameState>("finish_game", { gameDir });
 }
 
+export interface PruneResult {
+  state: GameState;
+  removed_files: number;
+  cleared_entries: number;
+  bytes_freed: number;
+}
+
+export async function pruneRenders(
+  gameDir: string,
+): Promise<PruneResult> {
+  return invoke<PruneResult>("prune_renders", { gameDir });
+}
+
 export async function bulkUpdateEventType(
   gameDir: string,
   eventIds: string[],
