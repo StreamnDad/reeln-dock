@@ -78,53 +78,7 @@ fn build_apply_plan(
     let mut filters = Vec::new();
     let mut audio_filter = None;
 
-    // Speed filter (no crop/scale): prefer speed_segments over scalar speed
-    if let Some(ref segments) = profile.speed_segments {
-        if !segments.is_empty() {
-            let mut vparts = Vec::new();
-            let mut aparts = Vec::new();
-            let mut start = 0.0_f64;
-            for (i, seg) in segments.iter().enumerate() {
-                let end_clause = if let Some(until) = seg.until {
-                    format!(":end={until}")
-                } else {
-                    String::new()
-                };
-                let pts_factor = 1.0 / seg.speed;
-                vparts.push(format!(
-                    "[0:v]trim=start={start}{end_clause},setpts={pts_factor:.4}*(PTS-STARTPTS)[v{i}]"
-                ));
-                aparts.push(format!(
-                    "[0:a]atrim=start={start}{end_clause},asetpts=PTS-STARTPTS,atempo={speed}[a{i}]",
-                    speed = seg.speed,
-                ));
-                if let Some(until) = seg.until {
-                    start = until;
-                }
-            }
-            let n = segments.len();
-            let v_inputs: String = (0..n).map(|i| format!("[v{i}]")).collect();
-            let a_inputs: String = (0..n).map(|i| format!("[a{i}]")).collect();
-            let mut fc_parts: Vec<String> = Vec::new();
-            fc_parts.extend(vparts);
-            fc_parts.extend(aparts);
-            fc_parts.push(format!(
-                "{v_inputs}{a_inputs}concat=n={n}:v=1:a=1[vfinal][aout]"
-            ));
-            return RenderPlan {
-                input: input.to_path_buf(),
-                output: output.to_path_buf(),
-                video_codec,
-                crf,
-                preset,
-                audio_codec,
-                audio_bitrate,
-                filters,
-                filter_complex: Some(fc_parts.join(";")),
-                audio_filter: None,
-            };
-        }
-    }
+    // speed_segments handled at higher level via render_speed_segments()
     if let Some(speed) = profile.speed {
         if (speed - 1.0).abs() > f64::EPSILON {
             let pts_factor = 1.0 / speed;
@@ -198,78 +152,11 @@ fn build_render_plan(
         filters.push(format!("scale=-2:{h}"));
     }
 
-    // Speed filter: prefer speed_segments over scalar speed
+    // Speed filter: prefer speed_segments over scalar speed.
+    // speed_segments are handled at a higher level (render_short renders each
+    // segment separately then concatenates) because the native libav backend
+    // only supports single-input filter graphs. See render_speed_segments().
     let mut audio_filter = None;
-    if let Some(ref segments) = profile.speed_segments {
-        if !segments.is_empty() {
-            // Build per-segment trim+setpts chains and concatenate them
-            let mut vparts = Vec::new();
-            let mut aparts = Vec::new();
-            let mut start = 0.0_f64;
-            for (i, seg) in segments.iter().enumerate() {
-                let end_clause = if let Some(until) = seg.until {
-                    format!(":end={until}")
-                } else {
-                    String::new()
-                };
-                let pts_factor = 1.0 / seg.speed;
-                vparts.push(format!(
-                    "[0:v]trim=start={start}{end_clause},setpts={pts_factor:.4}*(PTS-STARTPTS)[v{i}]"
-                ));
-                aparts.push(format!(
-                    "[0:a]atrim=start={start}{end_clause},asetpts=PTS-STARTPTS,atempo={speed}[a{i}]",
-                    speed = seg.speed,
-                ));
-                if let Some(until) = seg.until {
-                    start = until;
-                }
-            }
-            let n = segments.len();
-            let v_inputs: String = (0..n).map(|i| format!("[v{i}]")).collect();
-            let a_inputs: String = (0..n).map(|i| format!("[a{i}]")).collect();
-            let mut fc_parts: Vec<String> = Vec::new();
-            fc_parts.extend(vparts);
-            fc_parts.extend(aparts);
-            // Prepend any scale/crop filters to each video segment
-            if !filters.is_empty() {
-                let filter_str = filters.join(",");
-                // Apply scale/crop to the concat output
-                fc_parts.push(format!(
-                    "{v_inputs}{a_inputs}concat=n={n}:v=1:a=1[vout][aout];[vout]{filter_str}[vfinal]"
-                ));
-                // Clear filters since they're in the filter_complex now
-                filters.clear();
-                return RenderPlan {
-                    input: input.to_path_buf(),
-                    output: output.to_path_buf(),
-                    video_codec,
-                    crf,
-                    preset,
-                    audio_codec,
-                    audio_bitrate,
-                    filters,
-                    filter_complex: Some(fc_parts.join(";")),
-                    audio_filter: None,
-                };
-            } else {
-                fc_parts.push(format!(
-                    "{v_inputs}{a_inputs}concat=n={n}:v=1:a=1[vfinal][aout]"
-                ));
-                return RenderPlan {
-                    input: input.to_path_buf(),
-                    output: output.to_path_buf(),
-                    video_codec,
-                    crf,
-                    preset,
-                    audio_codec,
-                    audio_bitrate,
-                    filters,
-                    filter_complex: Some(fc_parts.join(";")),
-                    audio_filter: None,
-                };
-            }
-        }
-    }
     if let Some(speed) = profile.speed {
         if (speed - 1.0).abs() > f64::EPSILON {
             let pts_factor = 1.0 / speed;
@@ -302,6 +189,111 @@ fn build_render_plan(
 /// `mode` controls the render strategy:
 /// - `"short"` (default): applies crop/scale from profile dimensions
 /// - `"apply"`: full-frame, no crop/scale — only speed/LUT/overlay
+/// Render a clip with speed_segments by rendering each segment separately, then concatenating.
+/// The native libav backend only supports single-input filter graphs, so we can't use
+/// filter_complex with trim+concat. Instead, each segment is rendered individually with
+/// trim (ss/to) + setpts for speed, then concatenated.
+fn render_speed_segments(
+    backend: &Arc<dyn MediaBackend>,
+    config: &AppConfig,
+    input_clip: &Path,
+    output: &Path,
+    profile: &RenderProfile,
+    segments: &[reeln_config::SpeedSegment],
+    mode: Option<&str>,
+) -> Result<(), String> {
+    let output_dir = output.parent().unwrap_or(Path::new("."));
+    let stem = input_clip
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("clip");
+
+    let mut segment_files: Vec<PathBuf> = Vec::new();
+    let mut start = 0.0_f64;
+
+    for (i, seg) in segments.iter().enumerate() {
+        let seg_output = output_dir.join(format!("{stem}_seg{i}.mp4"));
+        let pts_factor = 1.0 / seg.speed;
+
+        let mut filters = Vec::new();
+        // Trim to segment range
+        filters.push(format!("trim=start={start}{}", if let Some(until) = seg.until { format!(":end={until}") } else { String::new() }));
+        filters.push("setpts=PTS-STARTPTS".to_string());
+        // Apply speed
+        if (seg.speed - 1.0).abs() > f64::EPSILON {
+            filters.push(format!("setpts={pts_factor:.4}*PTS"));
+        }
+        // Apply crop/scale only in short mode
+        if mode != Some("apply") {
+            if let (Some(w), Some(h)) = (profile.width, profile.height) {
+                match profile.crop_mode.as_deref() {
+                    Some("crop") => filters.push(format!("crop={w}:{h}")),
+                    Some("pad") => {
+                        let pc = profile.pad_color.as_deref().unwrap_or("black");
+                        filters.push(format!("scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color={pc}"));
+                    }
+                    _ => filters.push(format!("scale={w}:{h}")),
+                }
+            }
+        }
+
+        let audio_filter = if (seg.speed - 1.0).abs() > f64::EPSILON {
+            Some(format!("atrim=start={start}{},asetpts=PTS-STARTPTS,atempo={}",
+                if let Some(until) = seg.until { format!(":end={until}") } else { String::new() },
+                seg.speed))
+        } else {
+            Some(format!("atrim=start={start}{},asetpts=PTS-STARTPTS",
+                if let Some(until) = seg.until { format!(":end={until}") } else { String::new() }))
+        };
+
+        let video_codec = profile.codec.clone().unwrap_or_else(|| config.video.codec.clone());
+        let crf = profile.crf.unwrap_or(config.video.crf);
+        let preset = profile.preset.clone().or(Some(config.video.preset.clone()));
+        let audio_codec = profile.audio_codec.clone().unwrap_or_else(|| config.video.audio_codec.clone());
+
+        let plan = RenderPlan {
+            input: input_clip.to_path_buf(),
+            output: seg_output.clone(),
+            video_codec,
+            crf,
+            preset,
+            audio_codec,
+            audio_bitrate: profile.audio_bitrate.as_ref().and_then(|s| s.trim_end_matches('k').parse::<u32>().ok()),
+            filters,
+            filter_complex: None,
+            audio_filter,
+        };
+
+        backend.render(&plan).map_err(|e| e.to_string())?;
+        segment_files.push(seg_output);
+
+        if let Some(until) = seg.until {
+            start = until;
+        }
+    }
+
+    // Concatenate segments
+    if segment_files.len() == 1 {
+        std::fs::rename(&segment_files[0], output).map_err(|e| e.to_string())?;
+    } else {
+        let refs: Vec<&Path> = segment_files.iter().map(|p| p.as_path()).collect();
+        let opts = ConcatOptions {
+            copy: false,
+            video_codec: config.video.codec.clone(),
+            crf: config.video.crf,
+            audio_codec: config.video.audio_codec.clone(),
+            audio_rate: 48000,
+        };
+        backend.concat(&refs, output, &opts).map_err(|e| e.to_string())?;
+        // Clean up segment files
+        for f in &segment_files {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
+    Ok(())
+}
+
 pub fn render_short(
     backend: &Arc<dyn MediaBackend>,
     config: &AppConfig,
@@ -336,17 +328,27 @@ pub fn render_short(
 
     std::fs::create_dir_all(output_dir).map_err(|e| e.to_string())?;
 
-    let plan = if mode == Some("apply") {
-        build_apply_plan(input_clip, &output, &profile, config)
-    } else {
-        build_render_plan(input_clip, &output, &profile, config)
-    };
-
     if let Some(r) = reporter {
         r.report("render", 0.2, "Encoding video");
     }
 
-    let result = backend.render(&plan).map_err(|e| e.to_string())?;
+    // Use multi-pass render for speed_segments (native backend can't do
+    // filter_complex with trim+concat in a single graph)
+    let result = if profile.speed_segments.as_ref().map_or(false, |s| !s.is_empty()) {
+        let segments = profile.speed_segments.as_ref().unwrap();
+        render_speed_segments(backend, config, input_clip, &output, &profile, segments, mode)?;
+        RenderResult {
+            output: output.clone(),
+            duration_secs: backend.probe(&output).ok().and_then(|i| i.duration_secs).unwrap_or(0.0),
+        }
+    } else {
+        let plan = if mode == Some("apply") {
+            build_apply_plan(input_clip, &output, &profile, config)
+        } else {
+            build_render_plan(input_clip, &output, &profile, config)
+        };
+        backend.render(&plan).map_err(|e| e.to_string())?
+    };
 
     // If profile has a subtitle_template, composite the overlay
     let final_output = if let Some(ref template_path_str) = profile.subtitle_template {
@@ -366,9 +368,9 @@ pub fn render_short(
 
             let composited_output = output_dir.join(format!("{stem}_{profile_name}_final.mp4"));
             let comp_opts = reeln_media::composite::CompositeOptions {
-                video_codec: plan.video_codec.clone(),
-                crf: plan.crf,
-                audio_codec: plan.audio_codec.clone(),
+                video_codec: profile.codec.clone().unwrap_or_else(|| config.video.codec.clone()),
+                crf: profile.crf.unwrap_or(config.video.crf),
+                audio_codec: profile.audio_codec.clone().unwrap_or_else(|| config.video.audio_codec.clone()),
                 ..Default::default()
             };
             let comp_result = reeln_media::composite::composite_overlay(

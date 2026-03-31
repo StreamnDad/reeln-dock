@@ -282,6 +282,11 @@
 
                     <span class="text-text-muted">Clip</span>
                     <span class="truncate" title={item.clipPath}>{item.clipPath}</span>
+
+                    {#if item.status === "error" && item.error}
+                      <span class="text-text-muted">Error</span>
+                      <span class="text-red-400 text-[10px] break-all whitespace-pre-wrap">{item.error}</span>
+                    {/if}
                   </div>
                 </div>
               {/if}
