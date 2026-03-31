@@ -1,12 +1,37 @@
+import { invoke } from "@tauri-apps/api/core";
 import type { QueueItem } from "$lib/types/queue";
 import type { IterationItem, RenderOverrides } from "$lib/types/render";
 import { renderShort, renderIteration } from "$lib/ipc/render";
 import { log } from "$lib/stores/log.svelte";
 
 let queue = $state<QueueItem[]>([]);
+let initialized = false;
 
 function generateId(): string {
   return crypto.randomUUID();
+}
+
+/** Persist queue to disk (fire-and-forget). */
+function persist(): void {
+  invoke("save_render_queue", { queueJson: JSON.stringify(queue) }).catch(
+    (e) => log.error("RenderQueue", `Failed to persist: ${e}`),
+  );
+}
+
+/** Load queue from disk on first access. */
+export async function initQueue(): Promise<void> {
+  if (initialized) return;
+  initialized = true;
+  try {
+    const json = await invoke<string>("load_render_queue");
+    const loaded: QueueItem[] = JSON.parse(json);
+    // Reset any "rendering" items back to "pending" (interrupted by reload)
+    queue = loaded.map((q) =>
+      q.status === "rendering" ? { ...q, status: "pending" as const } : q,
+    );
+  } catch {
+    queue = [];
+  }
 }
 
 export function getQueue(): QueueItem[] {
@@ -37,14 +62,17 @@ export function addToQueue(item: {
       addedAt: Date.now(),
     },
   ];
+  persist();
 }
 
 export function removeFromQueue(id: string): void {
   queue = queue.filter((q) => q.id !== id);
+  persist();
 }
 
 export function clearCompleted(): void {
   queue = queue.filter((q) => q.status !== "done" && q.status !== "error");
+  persist();
 }
 
 export function reorderQueue(fromIdx: number, toIdx: number): void {
@@ -52,12 +80,14 @@ export function reorderQueue(fromIdx: number, toIdx: number): void {
   const [moved] = items.splice(fromIdx, 1);
   items.splice(toIdx, 0, moved);
   queue = items;
+  persist();
 }
 
 async function renderItem(item: QueueItem): Promise<void> {
   queue = queue.map((q) =>
     q.id === item.id ? { ...q, status: "rendering" as const } : q,
   );
+  persist();
 
   try {
     const outputDir = item.gameDir + "/renders";
@@ -109,6 +139,7 @@ async function renderItem(item: QueueItem): Promise<void> {
     );
     log.error("RenderQueue", `Failed: ${item.clipName}: ${err}`);
   }
+  persist();
 }
 
 export async function renderSingle(id: string): Promise<void> {

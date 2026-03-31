@@ -184,3 +184,28 @@ pub struct LoadedConfig {
     pub config: reeln_config::AppConfig,
     pub path: String,
 }
+
+// ── Render queue persistence ────────────────────────────────────────
+
+/// Save render queue to disk (app data dir).
+#[tauri::command]
+pub fn save_render_queue(
+    queue_json: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let path = state.app_data_dir.join("render-queue.json");
+    std::fs::write(&path, &queue_json).map_err(|e| e.to_string())
+}
+
+/// Load render queue from disk (app data dir). Returns empty array if not found.
+#[tauri::command]
+pub fn load_render_queue(
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let path = state.app_data_dir.join("render-queue.json");
+    if path.is_file() {
+        std::fs::read_to_string(&path).map_err(|e| e.to_string())
+    } else {
+        Ok("[]".to_string())
+    }
+}

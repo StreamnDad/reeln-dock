@@ -42,6 +42,8 @@ fn main() {
             commands::config::load_config_from_path,
             commands::config::get_config_path,
             commands::config::save_event_types,
+            commands::config::save_render_queue,
+            commands::config::load_render_queue,
             // Games (read)
             commands::games::list_games,
             commands::games::get_game_state,
