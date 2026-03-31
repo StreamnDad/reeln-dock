@@ -35,6 +35,7 @@ pub async fn render_short(
     event_id: Option<String>,
     game_dir: Option<String>,
     overrides: Option<RenderOverrides>,
+    mode: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let backend = state.media_backend.clone();
     let config = state
@@ -52,6 +53,7 @@ pub async fn render_short(
     let profile = profile_name.clone();
     let eid = event_id.clone();
     let gdir = game_dir.clone();
+    let render_mode = mode;
     let ovr = overrides.map(|o| render_ops::RenderOverrides {
         crop_mode: o.crop_mode,
         scale: o.scale,
@@ -72,6 +74,7 @@ pub async fn render_short(
             None,
             ovr.as_ref(),
             Some(&reporter),
+            render_mode.as_deref(),
         )
     })
     .await
@@ -104,6 +107,7 @@ pub async fn render_iteration(
     event_id: Option<String>,
     game_dir: Option<String>,
     concat_output: bool,
+    mode: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let backend = state.media_backend.clone();
     let config = state
@@ -120,6 +124,7 @@ pub async fn render_iteration(
     let out_dir = PathBuf::from(&output_dir);
     let eid = event_id.clone();
     let gdir = game_dir.clone();
+    let render_mode = mode;
 
     let iter_items: Vec<render_ops::IterationItem> = items
         .into_iter()
@@ -146,6 +151,7 @@ pub async fn render_iteration(
             &iter_items,
             concat_output,
             Some(&reporter),
+            render_mode.as_deref(),
         )
     })
     .await

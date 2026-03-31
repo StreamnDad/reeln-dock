@@ -1,7 +1,7 @@
 <script lang="ts">
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { tick } from "svelte";
-  import type { GameEvent, GameSummary } from "$lib/types/game";
+  import type { GameEvent, GameSummary, RenderEntry } from "$lib/types/game";
   import type { EventTypeEntry, RenderProfile } from "$lib/types/config";
   import type { RenderOverrides, IterationItem } from "$lib/types/render";
   import { probeClip, openInFinder } from "$lib/ipc/media";
@@ -16,6 +16,7 @@
   import { log } from "$lib/stores/log.svelte";
   import type { MediaInfoResponse } from "$lib/types/media";
   import VideoPlayer from "./VideoPlayer.svelte";
+  import RenderPlaybackModal from "./RenderPlaybackModal.svelte";
 
   interface Props {
     event: GameEvent;
@@ -55,6 +56,8 @@
   let renderProfiles = $state<RenderProfile[]>([]);
   let pluginProfiles = $state<ConfigProfile[]>([]);
   let selectedPluginProfile = $state("");
+  let renderMode = $state<"short" | "apply">("short");
+  let renderResult = $state<RenderEntry | null>(null);
   let renderQueue = $state<IterationItem[]>([]);
   let concatOutput = $state(true);
   let addProfileName = $state("");
@@ -337,25 +340,31 @@
     renderLoading = true;
     renderError = "";
     renderSuccess = "";
+    renderResult = null;
     try {
       const outputDir = game.dir_path + "/renders";
       const effectiveOverrides = cleanOverrides(overrides);
+      let resultEntry: RenderEntry | null = null;
       if (renderQueue.length === 1) {
         const item = renderQueue[0];
         const mergedOverrides = effectiveOverrides ? { ...effectiveOverrides, ...item.overrides } : item.overrides;
-        const entry = await renderShort(fullClipPath, outputDir, item.profile_name, event.id, game.dir_path, mergedOverrides);
-        renderSuccess = `Rendered: ${fileName(entry.output)}`;
+        const entry = await renderShort(fullClipPath, outputDir, item.profile_name, event.id, game.dir_path, mergedOverrides, renderMode);
+        resultEntry = entry;
       } else {
         const items: IterationItem[] = renderQueue.map((item) => ({
           profile_name: item.profile_name,
           overrides: effectiveOverrides ? { ...effectiveOverrides, ...item.overrides } : item.overrides,
         }));
-        const entries = await renderIteration(fullClipPath, outputDir, items, event.id, game.dir_path, concatOutput);
-        renderSuccess = `Rendered ${entries.length} format${entries.length !== 1 ? "s" : ""}`;
+        const entries = await renderIteration(fullClipPath, outputDir, items, event.id, game.dir_path, concatOutput, renderMode);
+        resultEntry = entries[0] ?? null;
       }
       const { getGameState } = await import("$lib/ipc/games");
       const newState = await getGameState(game.dir_path);
       onUpdateGame?.(game.dir_path, (g) => ({ ...g, state: newState }));
+      // Auto-show the result
+      if (resultEntry) {
+        renderResult = resultEntry;
+      }
     } catch (err) {
       renderError = String(err);
       log.error("ClipReview", `Render failed: ${err}`);
@@ -652,6 +661,33 @@
         </label>
       {/if}
 
+      <!-- Render mode: Short vs Apply -->
+      <div>
+        <label class="block text-xs text-text-muted mb-1">Render Mode</label>
+        <div class="flex gap-1">
+          <button
+            class="flex-1 px-2 py-1 rounded text-xs font-medium transition-colors text-center"
+            class:bg-secondary={renderMode === "short"}
+            class:text-bg={renderMode === "short"}
+            class:bg-bg={renderMode !== "short"}
+            class:text-text-muted={renderMode !== "short"}
+            class:border={renderMode !== "short"}
+            class:border-border={renderMode !== "short"}
+            onclick={() => renderMode = "short"}
+          >Short (crop/scale)</button>
+          <button
+            class="flex-1 px-2 py-1 rounded text-xs font-medium transition-colors text-center"
+            class:bg-secondary={renderMode === "apply"}
+            class:text-bg={renderMode === "apply"}
+            class:bg-bg={renderMode !== "apply"}
+            class:text-text-muted={renderMode !== "apply"}
+            class:border={renderMode !== "apply"}
+            class:border-border={renderMode !== "apply"}
+            onclick={() => renderMode = "apply"}
+          >Apply (full-frame)</button>
+        </div>
+      </div>
+
       <!-- Plugin profile -->
       {#if pluginProfiles.length > 0}
         <div>
@@ -861,4 +897,8 @@
     </div>
   {/if}
 </div>
+
+{#if renderResult}
+  <RenderPlaybackModal render={renderResult} onClose={() => renderResult = null} />
+{/if}
 

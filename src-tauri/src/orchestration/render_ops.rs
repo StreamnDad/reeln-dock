@@ -52,6 +52,59 @@ fn apply_overrides(profile: &mut RenderProfile, overrides: &RenderOverrides) {
     }
 }
 
+/// Build a full-frame `RenderPlan` — no crop/scale, just speed + LUT + encoding.
+fn build_apply_plan(
+    input: &Path,
+    output: &Path,
+    profile: &RenderProfile,
+    config: &AppConfig,
+) -> RenderPlan {
+    let video_codec = profile
+        .codec
+        .clone()
+        .unwrap_or_else(|| config.video.codec.clone());
+    let crf = profile.crf.unwrap_or(config.video.crf);
+    let preset = profile.preset.clone().or(Some(config.video.preset.clone()));
+    let audio_codec = profile
+        .audio_codec
+        .clone()
+        .unwrap_or_else(|| config.video.audio_codec.clone());
+    let audio_bitrate = profile
+        .audio_bitrate
+        .as_ref()
+        .and_then(|s| s.trim_end_matches('k').parse::<u32>().ok());
+
+    let mut filters = Vec::new();
+    let mut audio_filter = None;
+
+    // Speed filter (no crop/scale)
+    if let Some(speed) = profile.speed {
+        if (speed - 1.0).abs() > f64::EPSILON {
+            let pts_factor = 1.0 / speed;
+            filters.push(format!("setpts={pts_factor:.4}*PTS"));
+            audio_filter = Some(format!("atempo={speed}"));
+        }
+    }
+
+    // LUT filter
+    if let Some(ref lut) = profile.lut {
+        filters.push(format!("lut3d={lut}"));
+    }
+
+    RenderPlan {
+        input: input.to_path_buf(),
+        output: output.to_path_buf(),
+        video_codec,
+        crf,
+        preset,
+        audio_codec,
+        audio_bitrate,
+        filters,
+        filter_complex: None,
+        audio_filter,
+    }
+}
+
 /// Build a `RenderPlan` from a `RenderProfile` and config defaults.
 fn build_render_plan(
     input: &Path,
@@ -128,6 +181,10 @@ fn build_render_plan(
 }
 
 /// Render a short from a clip using a named render profile, with optional overrides.
+///
+/// `mode` controls the render strategy:
+/// - `"short"` (default): applies crop/scale from profile dimensions
+/// - `"apply"`: full-frame, no crop/scale — only speed/LUT/overlay
 pub fn render_short(
     backend: &Arc<dyn MediaBackend>,
     config: &AppConfig,
@@ -137,6 +194,7 @@ pub fn render_short(
     event_metadata: Option<&HashMap<String, String>>,
     overrides: Option<&RenderOverrides>,
     reporter: Option<&ProgressReporter>,
+    mode: Option<&str>,
 ) -> Result<RenderEntry, String> {
     let base_profile = config
         .render_profiles
@@ -161,7 +219,11 @@ pub fn render_short(
 
     std::fs::create_dir_all(output_dir).map_err(|e| e.to_string())?;
 
-    let plan = build_render_plan(input_clip, &output, &profile, config);
+    let plan = if mode == Some("apply") {
+        build_apply_plan(input_clip, &output, &profile, config)
+    } else {
+        build_render_plan(input_clip, &output, &profile, config)
+    };
 
     if let Some(r) = reporter {
         r.report("render", 0.2, "Encoding video");
@@ -235,6 +297,7 @@ pub fn render_iteration(
     items: &[IterationItem],
     concat_output: bool,
     reporter: Option<&ProgressReporter>,
+    mode: Option<&str>,
 ) -> Result<Vec<RenderEntry>, String> {
     if items.is_empty() {
         return Err("No iteration items provided".to_string());
@@ -266,6 +329,7 @@ pub fn render_iteration(
             None,
             item.overrides.as_ref(),
             None, // don't report sub-progress
+            mode,
         )?;
 
         entries.push(entry);

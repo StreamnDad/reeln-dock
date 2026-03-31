@@ -10,6 +10,7 @@ export async function renderShort(
   eventId?: string,
   gameDir?: string,
   overrides?: RenderOverrides,
+  mode?: string,
 ): Promise<RenderEntry> {
   return invoke<RenderEntry>("render_short", {
     inputClip,
@@ -18,6 +19,7 @@ export async function renderShort(
     eventId,
     gameDir,
     overrides: overrides ?? null,
+    mode: mode ?? null,
   });
 }
 
@@ -28,6 +30,7 @@ export async function renderIteration(
   eventId?: string,
   gameDir?: string,
   concatOutput: boolean = true,
+  mode?: string,
 ): Promise<RenderEntry[]> {
   return invoke<RenderEntry[]>("render_iteration", {
     inputClip,
@@ -36,6 +39,7 @@ export async function renderIteration(
     eventId,
     gameDir,
     concatOutput,
+    mode: mode ?? null,
   });
 }
 
