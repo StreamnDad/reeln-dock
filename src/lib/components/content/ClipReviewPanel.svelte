@@ -12,6 +12,7 @@
   import type { ConfigProfile } from "$lib/types/plugin";
   import { addToQueue as addToRenderQueue } from "$lib/stores/renderQueue.svelte";
   import { getDockSettings } from "$lib/stores/config.svelte";
+  import * as uiPrefs from "$lib/stores/uiPrefs.svelte";
   import { log } from "$lib/stores/log.svelte";
   import type { MediaInfoResponse } from "$lib/types/media";
   import VideoPlayer from "./VideoPlayer.svelte";
@@ -43,13 +44,12 @@
   let editingField = $state<string | null>(null);
   let editValue = $state("");
   let showSuggestions = $state(false);
-  let autoPlay = $state(false);
-  let autoAdvance = $state(false);
-
-  // Collapsible sections
-  let showRender = $state(false);
-  let showDetails = $state(false);
-  let showMediaInfo = $state(false);
+  // Persisted across navigation via uiPrefs store (read via getter, write via setter)
+  let autoPlay = $derived(uiPrefs.getAutoPlay());
+  let autoAdvance = $derived(uiPrefs.getAutoAdvance());
+  let showRender = $derived(uiPrefs.getShowRender());
+  let showDetails = $derived(uiPrefs.getShowDetails());
+  let showMediaInfo = $derived(uiPrefs.getShowMediaInfo());
 
   // Render profiles
   let renderProfiles = $state<RenderProfile[]>([]);
@@ -498,11 +498,11 @@
   <!-- Player controls -->
   <div class="flex items-center gap-3 text-sm">
     <label class="flex items-center gap-1.5 text-text-muted cursor-pointer">
-      <input type="checkbox" bind:checked={autoPlay} class="accent-secondary" />
+      <input type="checkbox" checked={autoPlay} onchange={() => uiPrefs.setAutoPlay(!autoPlay)} class="accent-secondary" />
       Auto-play
     </label>
     <label class="flex items-center gap-1.5 text-text-muted cursor-pointer">
-      <input type="checkbox" bind:checked={autoAdvance} class="accent-secondary" />
+      <input type="checkbox" checked={autoAdvance} onchange={() => uiPrefs.setAutoAdvance(!autoAdvance)} class="accent-secondary" />
       Auto-advance
     </label>
     {#if probeInfo}
@@ -594,7 +594,7 @@
   <!-- Collapsible: Render Options -->
   <button
     class="w-full text-left text-xs text-text-muted hover:text-text transition-colors flex items-center gap-1"
-    onclick={() => showRender = !showRender}
+    onclick={() => uiPrefs.setShowRender(!showRender)}
   >
     <span class="transition-transform" class:rotate-90={showRender}>&#9654;</span>
     Render Options
@@ -773,7 +773,7 @@
   <!-- Collapsible: Event Details -->
   <button
     class="w-full text-left text-xs text-text-muted hover:text-text transition-colors flex items-center gap-1"
-    onclick={() => showDetails = !showDetails}
+    onclick={() => uiPrefs.setShowDetails(!showDetails)}
   >
     <span class="transition-transform" class:rotate-90={showDetails}>&#9654;</span>
     Event Details
@@ -839,7 +839,7 @@
   {#if probeInfo}
     <button
       class="w-full text-left text-xs text-text-muted hover:text-text transition-colors flex items-center gap-1"
-      onclick={() => showMediaInfo = !showMediaInfo}
+      onclick={() => uiPrefs.setShowMediaInfo(!showMediaInfo)}
     >
       <span class="transition-transform" class:rotate-90={showMediaInfo}>&#9654;</span>
       Media Info

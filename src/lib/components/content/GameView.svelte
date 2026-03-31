@@ -3,6 +3,7 @@
   import type { EventTypeEntry } from "$lib/types/config";
   import { updateGameEvent, bulkUpdateEventType, getEventTypes, processSegment, mergeHighlights, finishGame, pruneRenders } from "$lib/ipc/games";
   import { log } from "$lib/stores/log.svelte";
+  import * as uiPrefs from "$lib/stores/uiPrefs.svelte";
   import RenderPlaybackModal from "./RenderPlaybackModal.svelte";
 
   // Action state
@@ -21,8 +22,8 @@
   let info = $derived(game.state.game_info);
   let gs = $derived(game.state);
 
-  // Segment filter — null means "all"
-  let selectedSegment = $state<number | null>(null);
+  // Segment filter — persisted across navigation
+  let selectedSegment = $derived(uiPrefs.getSelectedSegment());
 
   // Sort state
   type SortField = "event_type" | "player" | "segment_number" | "clip" | "created_at";
@@ -48,12 +49,12 @@
     [...new Set([...configuredEventTypes.map(e => e.name), ...gs.events.map((e) => e.event_type).filter(Boolean)])].sort(),
   );
 
-  // Event type filter — null means "all"
-  let selectedEventType = $state<string | null>(null);
+  // Event type filter — persisted across navigation
+  let selectedEventType = $derived(uiPrefs.getSelectedEventType());
 
-  // Collapsible sections
-  let eventsExpanded = $state(true);
-  let rendersExpanded = $state(true);
+  // Collapsible sections — persisted
+  let eventsExpanded = $derived(uiPrefs.getEventsExpanded());
+  let rendersExpanded = $derived(uiPrefs.getRendersExpanded());
 
   // Render playback
   let activeRender = $state<RenderEntry | null>(null);
@@ -338,7 +339,7 @@
             class:bg-surface={selectedSegment !== null}
             class:text-text-muted={selectedSegment !== null}
             class:hover:bg-surface-hover={selectedSegment !== null}
-            onclick={() => (selectedSegment = null)}
+            onclick={() => uiPrefs.setSelectedSegment(null)}
           >
             All
           </button>
@@ -350,7 +351,7 @@
               class:bg-surface={selectedSegment !== seg}
               class:text-text-muted={selectedSegment !== seg}
               class:hover:bg-surface-hover={selectedSegment !== seg}
-              onclick={() => (selectedSegment = selectedSegment === seg ? null : seg)}
+              onclick={() => uiPrefs.setSelectedSegment(selectedSegment === seg ? null : seg)}
             >
               Segment {seg}
             </button>
@@ -371,7 +372,7 @@
             class:bg-surface={selectedEventType !== null}
             class:text-text-muted={selectedEventType !== null}
             class:hover:bg-surface-hover={selectedEventType !== null}
-            onclick={() => (selectedEventType = null)}
+            onclick={() => uiPrefs.setSelectedEventType(null)}
           >
             All
           </button>
@@ -383,7 +384,7 @@
               class:bg-surface={selectedEventType !== et}
               class:text-text-muted={selectedEventType !== et}
               class:hover:bg-surface-hover={selectedEventType !== et}
-              onclick={() => (selectedEventType = selectedEventType === et ? null : et)}
+              onclick={() => uiPrefs.setSelectedEventType(selectedEventType === et ? null : et)}
             >
               {et}
             </button>
@@ -399,7 +400,7 @@
     <div>
       <button
         class="w-full text-left text-sm font-semibold uppercase tracking-wider text-text-muted hover:text-text transition-colors flex items-center gap-1.5 mb-2"
-        onclick={() => eventsExpanded = !eventsExpanded}
+        onclick={() => uiPrefs.setEventsExpanded(!eventsExpanded)}
       >
         <span class="transition-transform text-xs" class:rotate-90={eventsExpanded}>&#9654;</span>
         Events ({filteredEvents.length}{selectedSegment !== null || selectedEventType !== null ? ` of ${gs.events.length}` : ""})
@@ -597,7 +598,7 @@
       <div class="flex items-center gap-2 mb-2">
         <button
           class="text-left text-sm font-semibold uppercase tracking-wider text-text-muted hover:text-text transition-colors flex items-center gap-1.5"
-          onclick={() => rendersExpanded = !rendersExpanded}
+          onclick={() => uiPrefs.setRendersExpanded(!rendersExpanded)}
         >
           <span class="transition-transform text-xs" class:rotate-90={rendersExpanded}>&#9654;</span>
           Renders ({gs.renders.length})

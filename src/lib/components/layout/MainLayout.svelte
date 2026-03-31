@@ -53,7 +53,13 @@
   let teamLevels = $state<string[]>([]);
   let teamsByLevel = $state<Record<string, TeamProfile[]>>({});
 
-  function setView(v: View) { view = v; sidebarTab = "games"; selectedGameDir = null; selectedEventId_ = null; }
+  function setView(v: View) {
+    view = v;
+    // Only reset sidebar tab, preserve game selection so navigation persists
+    if (v === "games") {
+      sidebarTab = "games";
+    }
+  }
 
   /** Select a game and reload its state from disk (picks up CLI changes). */
   async function selectGame(dirPath: string | null) {
