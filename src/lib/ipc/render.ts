@@ -11,6 +11,9 @@ export async function renderShort(
   gameDir?: string,
   overrides?: RenderOverrides,
   mode?: string,
+  scorer?: string,
+  assist1?: string,
+  assist2?: string,
 ): Promise<RenderEntry> {
   return invoke<RenderEntry>("render_short", {
     inputClip,
@@ -20,6 +23,9 @@ export async function renderShort(
     gameDir,
     overrides: overrides ?? null,
     mode: mode ?? null,
+    scorer: scorer ?? null,
+    assist1: assist1 ?? null,
+    assist2: assist2 ?? null,
   });
 }
 
@@ -31,6 +37,9 @@ export async function renderIteration(
   gameDir?: string,
   concatOutput: boolean = true,
   mode?: string,
+  scorer?: string,
+  assist1?: string,
+  assist2?: string,
 ): Promise<RenderEntry[]> {
   return invoke<RenderEntry[]>("render_iteration", {
     inputClip,
@@ -40,6 +49,9 @@ export async function renderIteration(
     gameDir,
     concatOutput,
     mode: mode ?? null,
+    scorer: scorer ?? null,
+    assist1: assist1 ?? null,
+    assist2: assist2 ?? null,
   });
 }
 

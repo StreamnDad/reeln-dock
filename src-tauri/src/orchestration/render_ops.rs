@@ -299,6 +299,7 @@ pub fn render_iteration(
     concat_output: bool,
     reporter: Option<&ProgressReporter>,
     mode: Option<&str>,
+    event_metadata: Option<&HashMap<String, String>>,
 ) -> Result<Vec<RenderEntry>, String> {
     if items.is_empty() {
         return Err("No iteration items provided".to_string());
@@ -327,7 +328,7 @@ pub fn render_iteration(
             input_clip,
             output_dir,
             &item.profile_name,
-            None,
+            event_metadata,
             item.overrides.as_ref(),
             None, // don't report sub-progress
             mode,

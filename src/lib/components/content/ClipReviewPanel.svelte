@@ -359,14 +359,14 @@
       if (renderQueue.length === 1) {
         const item = renderQueue[0];
         const mergedOverrides = effectiveOverrides ? { ...effectiveOverrides, ...item.overrides } : item.overrides;
-        const entry = await renderShort(fullClipPath, outputDir, item.profile_name, event.id, game.dir_path, mergedOverrides, renderMode);
+        const entry = await renderShort(fullClipPath, outputDir, item.profile_name, event.id, game.dir_path, mergedOverrides, renderMode, currentScorer || undefined, currentAssist1 || undefined, currentAssist2 || undefined);
         resultEntry = entry;
       } else {
         const items: IterationItem[] = renderQueue.map((item) => ({
           profile_name: item.profile_name,
           overrides: effectiveOverrides ? { ...effectiveOverrides, ...item.overrides } : item.overrides,
         }));
-        const entries = await renderIteration(fullClipPath, outputDir, items, event.id, game.dir_path, concatOutput, renderMode);
+        const entries = await renderIteration(fullClipPath, outputDir, items, event.id, game.dir_path, concatOutput, renderMode, currentScorer || undefined, currentAssist1 || undefined, currentAssist2 || undefined);
         resultEntry = entries[0] ?? null;
       }
       const { getGameState } = await import("$lib/ipc/games");
@@ -426,6 +426,10 @@
       concatOutput: concatOutput,
       overrides: cleanOverrides(overrides),
       pluginProfile: selectedPluginProfile || undefined,
+      mode: renderMode,
+      scorer: currentScorer || undefined,
+      assist1: currentAssist1 || undefined,
+      assist2: currentAssist2 || undefined,
     });
     queueAdded = true;
     setTimeout(() => { queueAdded = false; }, 1500);

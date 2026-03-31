@@ -12,6 +12,10 @@ export interface QueueItem {
   concatOutput: boolean;
   overrides?: RenderOverrides;
   pluginProfile?: string;
+  mode?: "short" | "apply";
+  scorer?: string;
+  assist1?: string;
+  assist2?: string;
   status: "pending" | "rendering" | "done" | "error";
   jobId?: string;
   error?: string;

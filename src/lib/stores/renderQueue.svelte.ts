@@ -52,6 +52,10 @@ export function addToQueue(item: {
   concatOutput: boolean;
   overrides?: RenderOverrides;
   pluginProfile?: string;
+  mode?: "short" | "apply";
+  scorer?: string;
+  assist1?: string;
+  assist2?: string;
 }): void {
   queue = [
     ...queue,
@@ -103,6 +107,10 @@ async function renderItem(item: QueueItem): Promise<void> {
         item.eventId,
         item.gameDir,
         mergedOverrides,
+        item.mode,
+        item.scorer,
+        item.assist1,
+        item.assist2,
       );
       queue = queue.map((q) =>
         q.id === item.id
@@ -123,6 +131,10 @@ async function renderItem(item: QueueItem): Promise<void> {
         item.eventId,
         item.gameDir,
         item.concatOutput,
+        item.mode,
+        item.scorer,
+        item.assist1,
+        item.assist2,
       );
       queue = queue.map((q) =>
         q.id === item.id

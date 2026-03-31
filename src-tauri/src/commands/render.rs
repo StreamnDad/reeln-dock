@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -5,6 +6,66 @@ use tauri::{AppHandle, State};
 
 use crate::orchestration::{progress::ProgressReporter, render_ops};
 use crate::state::AppState;
+
+/// Build event metadata HashMap from game state + player params for overlay rendering.
+fn build_event_metadata(
+    game_dir: &str,
+    event_id: Option<&str>,
+    scorer: Option<&str>,
+    assist1: Option<&str>,
+    assist2: Option<&str>,
+) -> Option<HashMap<String, String>> {
+    let game_path = Path::new(game_dir);
+    let state = reeln_state::load_game_state(game_path).ok()?;
+    let info = &state.game_info;
+
+    let mut meta = HashMap::new();
+    meta.insert("home_team".to_string(), info.home_team.clone());
+    meta.insert("away_team".to_string(), info.away_team.clone());
+    meta.insert("date".to_string(), info.date.clone());
+    meta.insert("sport".to_string(), info.sport.clone());
+    meta.insert("tournament".to_string(), info.tournament.clone());
+    meta.insert("level".to_string(), info.level.clone());
+    if !info.venue.is_empty() {
+        meta.insert("venue".to_string(), info.venue.clone());
+    }
+
+    // Event-specific metadata
+    if let Some(eid) = event_id {
+        if let Some(event) = state.events.iter().find(|e| e.id == eid) {
+            meta.insert("event_type".to_string(), event.event_type.clone());
+            meta.insert(
+                "segment_number".to_string(),
+                event.segment_number.to_string(),
+            );
+            // Include event metadata (e.g. team)
+            for (k, v) in &event.metadata {
+                if let Some(s) = v.as_str() {
+                    meta.insert(k.clone(), s.to_string());
+                }
+            }
+        }
+    }
+
+    // Player data from explicit params (override event metadata)
+    if let Some(s) = scorer {
+        if !s.is_empty() {
+            meta.insert("player".to_string(), s.to_string());
+        }
+    }
+    if let Some(a) = assist1 {
+        if !a.is_empty() {
+            meta.insert("assist1".to_string(), a.to_string());
+        }
+    }
+    if let Some(a) = assist2 {
+        if !a.is_empty() {
+            meta.insert("assist2".to_string(), a.to_string());
+        }
+    }
+
+    Some(meta)
+}
 
 /// Optional overrides for render profile parameters.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -40,6 +101,9 @@ pub async fn render_short(
     game_dir: Option<String>,
     overrides: Option<RenderOverrides>,
     mode: Option<String>,
+    scorer: Option<String>,
+    assist1: Option<String>,
+    assist2: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let backend = state.media_backend.clone();
     let config = state
@@ -51,6 +115,17 @@ pub async fn render_short(
 
     let job_id = uuid::Uuid::new_v4().to_string();
     let reporter = ProgressReporter::new(app, job_id.clone());
+
+    // Build event metadata from game state + player params
+    let event_meta = game_dir.as_deref().and_then(|gdir| {
+        build_event_metadata(
+            gdir,
+            event_id.as_deref(),
+            scorer.as_deref(),
+            assist1.as_deref(),
+            assist2.as_deref(),
+        )
+    });
 
     let input = PathBuf::from(&input_clip);
     let out_dir = PathBuf::from(&output_dir);
@@ -76,7 +151,7 @@ pub async fn render_short(
             &input,
             &out_dir,
             &profile,
-            None,
+            event_meta.as_ref(),
             ovr.as_ref(),
             Some(&reporter),
             render_mode.as_deref(),
@@ -113,6 +188,9 @@ pub async fn render_iteration(
     game_dir: Option<String>,
     concat_output: bool,
     mode: Option<String>,
+    scorer: Option<String>,
+    assist1: Option<String>,
+    assist2: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let backend = state.media_backend.clone();
     let config = state
@@ -124,6 +202,17 @@ pub async fn render_iteration(
 
     let job_id = uuid::Uuid::new_v4().to_string();
     let reporter = ProgressReporter::new(app, job_id.clone());
+
+    // Build event metadata from game state + player params
+    let event_meta = game_dir.as_deref().and_then(|gdir| {
+        build_event_metadata(
+            gdir,
+            event_id.as_deref(),
+            scorer.as_deref(),
+            assist1.as_deref(),
+            assist2.as_deref(),
+        )
+    });
 
     let input = PathBuf::from(&input_clip);
     let out_dir = PathBuf::from(&output_dir);
@@ -158,6 +247,7 @@ pub async fn render_iteration(
             concat_output,
             Some(&reporter),
             render_mode.as_deref(),
+            event_meta.as_ref(),
         )
     })
     .await
