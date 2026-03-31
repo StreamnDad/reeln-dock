@@ -8,9 +8,13 @@
     reorderQueue,
     getPendingCount,
   } from "$lib/stores/renderQueue.svelte";
+  import type { RenderEntry } from "$lib/types/game";
+  import RenderPlaybackModal from "./RenderPlaybackModal.svelte";
+
   let queue = $derived(getQueue());
   let pendingCount = $derived(getPendingCount());
   let rendering = $state(false);
+  let activeRender = $state<RenderEntry | null>(null);
   let dragIndex = $state<number | null>(null);
   let dragOverIndex = $state<number | null>(null);
 
@@ -159,6 +163,12 @@
                     onclick={() => handleRenderSingle(item.id)}
                   >Render</button>
                 {/if}
+                {#if item.status === "done" && item.results && item.results.length > 0}
+                  <button
+                    class="px-2 py-1 text-xs text-secondary hover:text-text bg-bg rounded transition-colors"
+                    onclick={() => activeRender = item.results![0]}
+                  >View</button>
+                {/if}
                 <button
                   class="px-1.5 py-1 text-text-muted hover:text-accent text-xs transition-colors"
                   onclick={() => removeFromQueue(item.id)}
@@ -172,3 +182,7 @@
     {/each}
   {/if}
 </div>
+
+{#if activeRender}
+  <RenderPlaybackModal render={activeRender} onClose={() => activeRender = null} />
+{/if}

@@ -628,6 +628,7 @@
                   <th class="px-3 py-2">Crop</th>
                   <th class="px-3 py-2">Output</th>
                   <th class="px-3 py-2">Date</th>
+                  <th class="px-3 py-2 w-16"></th>
                 </tr>
               </thead>
               <tbody>
@@ -638,6 +639,9 @@
                     <td class="px-3 py-2">{render.crop_mode}</td>
                     <td class="px-3 py-2 text-text-muted truncate max-w-48">{render.output}</td>
                     <td class="px-3 py-2 text-text-muted">{render.rendered_at}</td>
+                    <td class="px-3 py-2">
+                      <span class="text-xs text-secondary">View</span>
+                    </td>
                   </tr>
                 {/each}
               </tbody>

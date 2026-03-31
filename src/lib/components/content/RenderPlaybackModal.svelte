@@ -13,6 +13,7 @@
 
   let videoSrc = $derived(convertFileSrc(render.output));
   let videoError = $state(false);
+  let expanded = $state(false);
 
   function fileName(path: string): string {
     return path.split("/").pop() || path;
@@ -21,7 +22,11 @@
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
       e.preventDefault();
-      onClose();
+      if (expanded) {
+        expanded = false;
+      } else {
+        onClose();
+      }
     }
   }
 
@@ -39,18 +44,35 @@
   class="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
   onclick={handleBackdropClick}
 >
-  <div class="bg-bg rounded-xl border border-border shadow-2xl max-w-2xl w-full mx-4 overflow-hidden">
+  <div
+    class="bg-bg border border-border shadow-2xl overflow-hidden transition-all duration-200"
+    class:rounded-xl={!expanded}
+    class:max-w-2xl={!expanded}
+    class:w-full={!expanded}
+    class:mx-4={!expanded}
+    class:inset-4={expanded}
+    class:fixed={expanded}
+    class:rounded-lg={expanded}
+    style={expanded ? "max-width: none; margin: 0;" : ""}
+  >
     <!-- Header -->
-    <div class="flex items-center justify-between px-4 py-3 border-b border-border">
-      <h3 class="text-sm font-semibold">{render.format} &middot; {fileName(render.output)}</h3>
-      <button
-        class="text-text-muted hover:text-text transition-colors text-lg leading-none"
-        onclick={onClose}
-      >&times;</button>
+    <div class="flex items-center justify-between px-4 py-2.5 border-b border-border shrink-0">
+      <h3 class="text-sm font-semibold truncate mr-4">{render.format} &middot; {fileName(render.output)}</h3>
+      <div class="flex items-center gap-2 shrink-0">
+        <button
+          class="text-xs text-text-muted hover:text-text transition-colors"
+          onclick={() => expanded = !expanded}
+          title={expanded ? "Collapse" : "Expand"}
+        >{expanded ? "Collapse" : "Expand"}</button>
+        <button
+          class="text-text-muted hover:text-text transition-colors text-lg leading-none"
+          onclick={onClose}
+        >&times;</button>
+      </div>
     </div>
 
     <!-- Video -->
-    <div class="bg-black">
+    <div class="bg-black" class:flex-1={expanded} class:min-h-0={expanded} style={expanded ? "display: flex; flex-direction: column;" : ""}>
       {#if videoError}
         <div class="aspect-video flex items-center justify-center">
           <div class="text-center p-4">
@@ -62,21 +84,22 @@
         <VideoPlayer
           src={videoSrc}
           autoplay={true}
+          class={expanded ? "max-h-[calc(100vh-12rem)]" : ""}
           onerror={() => { videoError = true; }}
         />
       {/if}
     </div>
 
     <!-- Metadata + Actions -->
-    <div class="px-4 py-3 space-y-3">
-      <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+    <div class="px-4 py-3 space-y-2 border-t border-border shrink-0">
+      <div class="flex flex-wrap gap-x-6 gap-y-1 text-sm">
         <div>
           <span class="text-text-muted">Format</span>
           <span class="ml-2 font-medium">{render.format}</span>
         </div>
         <div>
           <span class="text-text-muted">Crop</span>
-          <span class="ml-2">{render.crop_mode}</span>
+          <span class="ml-2">{render.crop_mode || "-"}</span>
         </div>
         <div>
           <span class="text-text-muted">Segment</span>
