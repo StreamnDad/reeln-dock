@@ -110,16 +110,99 @@ cd src-tauri && cargo clippy -- -D warnings
 - **Config:** JSON format, same schema as reeln-cli (`REELN_*` env overrides)
 - **File paths:** Always use Tauri's path APIs (`appDataDir`, `appConfigDir`) — never hardcode
 
-## Frontend Pages (planned)
+## Frontend Views
 
-| Page | Purpose |
+| View | Purpose |
 |---|---|
-| **Dashboard** | Active games, recent highlights, quick actions |
-| **Game View** | Segment timeline, drag-and-drop clip reordering, event log |
-| **Render Queue** | Progress bars, render history, cancel/retry |
-| **Settings** | Config editor, plugin manager, profile switcher |
-| **Sport Profiles** | Custom sport definitions, segment naming |
-| **Overlay Editor** | Live template preview, variable binding, color picker |
+| **Games** | Game list grouped by tournament, clip review panel, event tagging, render options |
+| **Queue** | Render queue — batch staging area with per-item rendering and progress |
+| **Plugins** | Plugin manager — enable/disable per config profile, settings editor |
+| **Registry** | Plugin registry browser — discover and install plugins |
+| **Settings** | Dock config, teams, tournaments, event types, rendering defaults, logs |
+
+## Plugin-Driven UI
+
+The dock is **plugin-first** — plugins declare what UI fields they contribute, and the dock
+renders them dynamically based on what's installed and enabled.
+
+### How It Works
+
+1. Plugins declare `ui_contributions` in the registry (`registry/plugins.json`)
+2. Each contribution targets a screen: `render_options`, `settings`, or `clip_review`
+3. The dock loads the registry, cross-references with installed/enabled plugins
+4. `DynamicPluginFields.svelte` renders active fields per screen
+5. Field values flow into `RenderOverrides` (render_options) or event metadata (clip_review)
+
+### Registry Schema for UI Contributions
+
+```json
+{
+  "name": "openai",
+  "ui_contributions": {
+    "render_options": {
+      "fields": [
+        {
+          "id": "smart",
+          "label": "Smart Zoom",
+          "type": "boolean",
+          "default": false,
+          "description": "AI-powered smart crop tracking",
+          "maps_to": "smart"
+        },
+        {
+          "id": "zoom_frames",
+          "label": "Zoom Frames",
+          "type": "number",
+          "min": 1,
+          "max": 30,
+          "step": 1,
+          "description": "Keyframes for smart zoom path",
+          "maps_to": "zoom_frames"
+        }
+      ]
+    }
+  }
+}
+```
+
+### Field Types
+
+| Type | Renders as | Props |
+|---|---|---|
+| `boolean` | Checkbox | `default` |
+| `number` | Range slider or number input | `min`, `max`, `step`, `default` |
+| `string` | Text input | `default` |
+| `select` | Dropdown | `options: [{value, label}]`, `default` |
+
+### Key Files
+
+| File | Purpose |
+|---|---|
+| `src/lib/types/plugin.ts` | `PluginUIField`, `PluginUIScreen`, `PluginUIContributions` types |
+| `src/lib/stores/pluginUI.svelte.ts` | Loads registry + enabled plugins, computes active fields per screen |
+| `src/lib/components/content/DynamicPluginFields.svelte` | Generic field renderer for plugin-declared fields |
+| `src-tauri/src/commands/plugins.rs` | `RegistryPlugin` passes `ui_contributions` as raw JSON |
+
+### Render Modes
+
+Two render modes, selectable per-clip and configurable as default in Settings > Rendering:
+
+| Mode | Behavior |
+|---|---|
+| **Short** | Crops/scales to profile dimensions (vertical shorts for social media) |
+| **Apply** | Full-frame, no crop/scale — only applies speed, LUT, overlay from profile |
+
+## Stores Architecture
+
+| Store | Persistence | Purpose |
+|---|---|---|
+| `config.svelte.ts` | Tauri IPC (DockSettings JSON) | App config, dock settings |
+| `renderQueue.svelte.ts` | `render-queue.json` in app data dir | Render queue items across sessions |
+| `uiPrefs.svelte.ts` | In-memory (session) | Auto-play, auto-advance, filters, section toggles |
+| `pluginUI.svelte.ts` | In-memory (loaded from registry) | Active plugin UI contributions per screen |
+| `jobs.svelte.ts` | In-memory | Render job progress tracking |
+| `games.ts` | Writable stores | Game list, selected game/event, filters |
+| `navigation.ts` | Writable stores | Current view, sidebar mode |
 
 ## Dependency on reeln-core
 
