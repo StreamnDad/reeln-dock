@@ -152,15 +152,13 @@
     // Apply default render overrides from dock
     const dockOverrides = dockRendering?.overrides;
     const pluginDefaults = (dockRendering?.plugin_field_defaults as Record<string, unknown>) ?? {};
-    if (dockOverrides || Object.keys(pluginDefaults).length > 0) {
-      overrides = {
-        ...pluginDefaults,
-        crop_mode: dockOverrides?.crop_mode,
-        scale: dockOverrides?.scale,
-        speed: dockOverrides?.speed,
-        smart: dockOverrides?.smart,
-      };
-    }
+    overrides = {
+      ...pluginDefaults,
+      crop_mode: dockOverrides?.crop_mode,
+      scale: dockOverrides?.scale ?? 1.0,
+      speed: dockOverrides?.speed ?? 1.0,
+      smart: dockOverrides?.smart,
+    };
   });
 
   // Prefill from queue edit request
@@ -780,17 +778,17 @@
             </div>
           {/if}
           <div>
-            <label class="block text-xs text-text-muted mb-1" for="scale">Scale: {overrides.scale?.toFixed(1) ?? "default"}</label>
+            <label class="block text-xs text-text-muted mb-1" for="scale">Scale: {(overrides.scale ?? 1.0).toFixed(1)}</label>
             <div class="flex items-center gap-2">
-              <input id="scale" type="range" min="0.5" max="3.0" step="0.1" bind:value={overrides.scale} class="flex-1 accent-secondary" />
-              <button class="text-[10px] text-text-muted hover:text-text" onclick={() => overrides.scale = undefined}>reset</button>
+              <input id="scale" type="range" min="0.5" max="3.0" step="0.1" value={overrides.scale ?? 1.0} oninput={(e) => overrides.scale = Number((e.target as HTMLInputElement).value)} class="flex-1 accent-secondary" />
+              <button class="text-[10px] text-text-muted hover:text-text" onclick={() => overrides.scale = 1.0}>reset</button>
             </div>
           </div>
           <div>
-            <label class="block text-xs text-text-muted mb-1" for="speed">Speed: {overrides.speed?.toFixed(1) ?? "default"}x</label>
+            <label class="block text-xs text-text-muted mb-1" for="speed">Speed: {(overrides.speed ?? 1.0).toFixed(1)}x</label>
             <div class="flex items-center gap-2">
-              <input id="speed" type="range" min="0.5" max="2.0" step="0.1" bind:value={overrides.speed} class="flex-1 accent-secondary" />
-              <button class="text-[10px] text-text-muted hover:text-text" onclick={() => overrides.speed = undefined}>reset</button>
+              <input id="speed" type="range" min="0.5" max="2.0" step="0.1" value={overrides.speed ?? 1.0} oninput={(e) => overrides.speed = Number((e.target as HTMLInputElement).value)} class="flex-1 accent-secondary" />
+              <button class="text-[10px] text-text-muted hover:text-text" onclick={() => overrides.speed = 1.0}>reset</button>
             </div>
           </div>
           <div>
