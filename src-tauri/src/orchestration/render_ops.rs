@@ -153,19 +153,31 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
         .collect();
 
     // If CLI didn't record entries (iteration path doesn't save to game.json),
-    // find the output file and create an entry ourselves
+    // parse the CLI output to find the result file, or search common locations
     if new_entries.is_empty() {
-        let renders_dir = params.game_dir.join("renders");
+        let stdout = String::from_utf8_lossy(&output.stdout);
         let stem = params.input_clip
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("clip");
+        let clip_parent = params.input_clip.parent().unwrap_or(params.game_dir);
 
-        // Look for iteration output or single profile output
-        let candidates = [
-            renders_dir.join(format!("{stem}_iteration.mp4")),
-            renders_dir.join(format!("{stem}_{}.mp4", params.profile_name)),
-        ];
+        // Try to find "Output: <path>" in stderr (CLI logs to stderr)
+        let output_from_log = stderr.lines()
+            .find(|l| l.starts_with("Output: "))
+            .map(|l| PathBuf::from(l.trim_start_matches("Output: ").trim()));
+
+        // Search common output locations
+        let mut candidates: Vec<PathBuf> = Vec::new();
+        if let Some(ref p) = output_from_log {
+            candidates.push(p.clone());
+        }
+        // CLI short mode: {clip_parent}/shorts/{stem}_short.mp4
+        candidates.push(clip_parent.join("shorts").join(format!("{stem}_short.mp4")));
+        // CLI iteration: {clip_parent}/shorts/{stem}_short.mp4 (same)
+        candidates.push(params.game_dir.join("renders").join(format!("{stem}_iteration.mp4")));
+        candidates.push(params.game_dir.join("renders").join(format!("{stem}_{}.mp4", params.profile_name)));
+
         if let Some(output_path) = candidates.iter().find(|p| p.is_file()) {
             let entry = RenderEntry {
                 input: params.input_clip.display().to_string(),
