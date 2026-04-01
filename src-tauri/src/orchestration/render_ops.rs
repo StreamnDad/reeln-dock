@@ -122,6 +122,11 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
         cmd.arg("--iterate");
     }
 
+    // Disable branding — native backend doesn't have subtitles filter (libass)
+    if subcommand == "short" {
+        cmd.arg("--no-branding");
+    }
+
     // Execute
     let output = cmd
         .output()
