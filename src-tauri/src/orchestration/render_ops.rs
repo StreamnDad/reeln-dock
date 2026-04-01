@@ -146,12 +146,47 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
     let post_state = reeln_state::load_game_state(params.game_dir)
         .map_err(|e| format!("Failed to read game state after render: {e}"))?;
 
-    // Return only the new entries (entries added by this CLI call)
-    let new_entries = post_state
+    let new_entries: Vec<RenderEntry> = post_state
         .renders
         .into_iter()
         .skip(pre_render_count)
         .collect();
+
+    // If CLI didn't record entries (iteration path doesn't save to game.json),
+    // find the output file and create an entry ourselves
+    if new_entries.is_empty() {
+        let renders_dir = params.game_dir.join("renders");
+        let stem = params.input_clip
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("clip");
+
+        // Look for iteration output or single profile output
+        let candidates = [
+            renders_dir.join(format!("{stem}_iteration.mp4")),
+            renders_dir.join(format!("{stem}_{}.mp4", params.profile_name)),
+        ];
+        if let Some(output_path) = candidates.iter().find(|p| p.is_file()) {
+            let entry = RenderEntry {
+                input: params.input_clip.display().to_string(),
+                output: output_path.display().to_string(),
+                segment_number: 0,
+                format: params.profile_name.to_string(),
+                crop_mode: params.overrides
+                    .and_then(|o| o.crop_mode.clone())
+                    .unwrap_or_default(),
+                rendered_at: chrono::Utc::now().to_rfc3339(),
+                event_id: params.event_id.unwrap_or("").to_string(),
+            };
+            // Save to game state
+            let mut state = reeln_state::load_game_state(params.game_dir)
+                .map_err(|e| e.to_string())?;
+            state.renders.push(entry.clone());
+            reeln_state::save_game_state(&state, params.game_dir)
+                .map_err(|e| e.to_string())?;
+            return Ok(vec![entry]);
+        }
+    }
 
     Ok(new_entries)
 }
