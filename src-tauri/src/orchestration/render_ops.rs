@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 
 use reeln_config::{AppConfig, RenderProfile};
@@ -7,6 +8,148 @@ use reeln_media::{ConcatOptions, MediaBackend, RenderPlan, RenderResult};
 use reeln_state::RenderEntry;
 
 use super::progress::ProgressReporter;
+
+/// Parameters for CLI-based rendering.
+pub struct CliRenderParams<'a> {
+    pub cli_path: &'a str,
+    pub config_path: Option<&'a str>,
+    pub input_clip: &'a Path,
+    pub game_dir: &'a Path,
+    pub profile_name: &'a str,
+    pub event_id: Option<&'a str>,
+    pub mode: Option<&'a str>,
+    pub overrides: Option<&'a RenderOverrides>,
+    pub scorer: Option<&'a str>,
+    pub assist1: Option<&'a str>,
+    pub assist2: Option<&'a str>,
+    pub iterate: bool,
+    pub event_type: Option<&'a str>,
+}
+
+/// Render via the reeln CLI subprocess. Returns new RenderEntries added to game state.
+///
+/// The CLI handles: builtin templates, speed_segments, smart zoom, player overlays,
+/// POST_RENDER plugin hooks, and all other features the native backend can't do.
+pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, String> {
+    // Snapshot renders before CLI call so we can diff afterward
+    let pre_render_count = reeln_state::load_game_state(params.game_dir)
+        .map(|s| s.renders.len())
+        .unwrap_or(0);
+
+    // Build the CLI command
+    let subcommand = if params.mode == Some("apply") { "apply" } else { "short" };
+    let mut cmd = Command::new(params.cli_path);
+    cmd.arg("render").arg(subcommand);
+
+    // Positional: clip path
+    cmd.arg(params.input_clip);
+
+    // Profile
+    cmd.arg("--render-profile").arg(params.profile_name);
+
+    // Game dir
+    cmd.arg("--game-dir").arg(params.game_dir);
+
+    // Event ID
+    if let Some(eid) = params.event_id {
+        if !eid.is_empty() {
+            cmd.arg("--event").arg(eid);
+        }
+    }
+
+    // Config path
+    if let Some(config) = params.config_path {
+        cmd.arg("--config").arg(config);
+    }
+
+    // Overrides (only for "short" mode — "apply" doesn't accept these)
+    if subcommand == "short" {
+        if let Some(ovr) = params.overrides {
+            if let Some(ref crop) = ovr.crop_mode {
+                if !crop.is_empty() {
+                    cmd.arg("--crop").arg(crop);
+                }
+            }
+            if let Some(scale) = ovr.scale {
+                if (scale - 1.0).abs() > f64::EPSILON {
+                    cmd.arg("--scale").arg(scale.to_string());
+                }
+            }
+            if let Some(speed) = ovr.speed {
+                if (speed - 1.0).abs() > f64::EPSILON {
+                    cmd.arg("--speed").arg(speed.to_string());
+                }
+            }
+            if ovr.smart == Some(true) {
+                cmd.arg("--smart");
+            }
+            if let Some(zf) = ovr.zoom_frames {
+                cmd.arg("--zoom-frames").arg(zf.to_string());
+            }
+            if let Some(ref pc) = ovr.pad_color {
+                if !pc.is_empty() {
+                    cmd.arg("--pad-color").arg(pc);
+                }
+            }
+        }
+    }
+
+    // Player info
+    if let Some(scorer) = params.scorer {
+        if !scorer.is_empty() {
+            cmd.arg("--player").arg(scorer);
+        }
+    }
+    if params.assist1.is_some() || params.assist2.is_some() {
+        let assists: Vec<&str> = [params.assist1, params.assist2]
+            .iter()
+            .filter_map(|a| a.filter(|s| !s.is_empty()))
+            .collect();
+        if !assists.is_empty() {
+            cmd.arg("--assists").arg(assists.join(","));
+        }
+    }
+
+    // Event type (for scoring team resolution)
+    if let Some(et) = params.event_type {
+        if !et.is_empty() {
+            cmd.arg("--event-type").arg(et);
+        }
+    }
+
+    // Iterate flag
+    if params.iterate {
+        cmd.arg("--iterate");
+    }
+
+    // Execute
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to execute reeln CLI: {e}"))?;
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if !output.status.success() {
+        let code = output.status.code().unwrap_or(-1);
+        return Err(format!(
+            "reeln render {} failed (exit code {code}):\n{stderr}",
+            subcommand
+        ));
+    }
+
+    // CLI succeeded — read back game state to find new render entries
+    let post_state = reeln_state::load_game_state(params.game_dir)
+        .map_err(|e| format!("Failed to read game state after render: {e}"))?;
+
+    // Return only the new entries (entries added by this CLI call)
+    let new_entries = post_state
+        .renders
+        .into_iter()
+        .skip(pre_render_count)
+        .collect();
+
+    Ok(new_entries)
+}
 
 /// Optional overrides for render profile parameters.
 #[derive(Debug, Clone, Default)]

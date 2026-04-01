@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
-use crate::orchestration::{progress::ProgressReporter, render_ops};
+use crate::orchestration::{hook_executor, progress::ProgressReporter, render_ops};
 use crate::state::AppState;
 
 /// Build event metadata HashMap from game state + player params for overlay rendering.
@@ -105,6 +105,76 @@ pub async fn render_short(
     assist1: Option<String>,
     assist2: Option<String>,
 ) -> Result<serde_json::Value, String> {
+    // Try CLI first (full features), fall back to native backend
+    let cli_path = {
+        let settings = state.dock_settings.lock().map_err(|e| e.to_string())?;
+        hook_executor::detect_reeln_cli(settings.reeln_cli_path.as_deref()).ok()
+    };
+
+    if let (Some(cli), Some(gdir)) = (&cli_path, &game_dir) {
+        let config_path = state.dock_settings.lock().map_err(|e| e.to_string())?
+            .reeln_config_path.clone();
+
+        // Build event_type from game state for scoring team resolution
+        let event_type = event_id.as_deref().and_then(|eid| {
+            let game_path = Path::new(gdir.as_str());
+            reeln_state::load_game_state(game_path).ok().and_then(|s| {
+                s.events.iter().find(|e| e.id == eid).map(|e| e.event_type.clone())
+            })
+        });
+
+        let ovr = overrides.as_ref().map(|o| render_ops::RenderOverrides {
+            crop_mode: o.crop_mode.clone(),
+            scale: o.scale,
+            speed: o.speed,
+            smart: o.smart,
+            anchor_x: o.anchor_x,
+            anchor_y: o.anchor_y,
+            pad_color: o.pad_color.clone(),
+            zoom_frames: o.zoom_frames,
+        });
+
+        let input = PathBuf::from(&input_clip);
+        let game_path = PathBuf::from(gdir.as_str());
+        let pname = profile_name.clone();
+        let render_mode = mode.clone();
+        let eid = event_id.clone();
+        let sc = scorer.clone();
+        let a1 = assist1.clone();
+        let a2 = assist2.clone();
+        let cli_owned = cli.clone();
+        let et = event_type;
+
+        let result = tokio::task::spawn_blocking(move || {
+            let params = render_ops::CliRenderParams {
+                cli_path: &cli_owned,
+                config_path: config_path.as_deref(),
+                input_clip: &input,
+                game_dir: &game_path,
+                profile_name: &pname,
+                event_id: eid.as_deref(),
+                mode: render_mode.as_deref(),
+                overrides: ovr.as_ref(),
+                scorer: sc.as_deref(),
+                assist1: a1.as_deref(),
+                assist2: a2.as_deref(),
+                iterate: false,
+                event_type: et.as_deref(),
+            };
+            render_ops::render_via_cli(&params)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let entries = result?;
+        // CLI already saved to game.json — return the new entries
+        if entries.len() == 1 {
+            return serde_json::to_value(&entries[0]).map_err(|e| e.to_string());
+        }
+        return serde_json::to_value(&entries).map_err(|e| e.to_string());
+    }
+
+    // ── Native backend fallback (no CLI) ──────────────────────────────
     let backend = state.media_backend.clone();
     let config = state
         .config
@@ -116,7 +186,6 @@ pub async fn render_short(
     let job_id = uuid::Uuid::new_v4().to_string();
     let reporter = ProgressReporter::new(app, job_id.clone());
 
-    // Build event metadata from game state + player params
     let event_meta = game_dir.as_deref().and_then(|gdir| {
         build_event_metadata(
             gdir,
@@ -192,6 +261,75 @@ pub async fn render_iteration(
     assist1: Option<String>,
     assist2: Option<String>,
 ) -> Result<serde_json::Value, String> {
+    // Try CLI first — with --iterate, CLI handles multi-profile + concatenation
+    let cli_path = {
+        let settings = state.dock_settings.lock().map_err(|e| e.to_string())?;
+        hook_executor::detect_reeln_cli(settings.reeln_cli_path.as_deref()).ok()
+    };
+
+    if let (Some(cli), Some(gdir)) = (&cli_path, &game_dir) {
+        let config_path = state.dock_settings.lock().map_err(|e| e.to_string())?
+            .reeln_config_path.clone();
+
+        let event_type = event_id.as_deref().and_then(|eid| {
+            let game_path = Path::new(gdir.as_str());
+            reeln_state::load_game_state(game_path).ok().and_then(|s| {
+                s.events.iter().find(|e| e.id == eid).map(|e| e.event_type.clone())
+            })
+        });
+
+        // Use the first profile's name for the CLI --render-profile flag
+        // (with --iterate, the CLI uses event type → profile mappings from config)
+        let first_profile = items.first().map(|i| i.profile_name.clone()).unwrap_or_default();
+
+        // Merge global overrides (if any)
+        let ovr = items.first().and_then(|i| i.overrides.as_ref()).map(|o| render_ops::RenderOverrides {
+            crop_mode: o.crop_mode.clone(),
+            scale: o.scale,
+            speed: o.speed,
+            smart: o.smart,
+            anchor_x: o.anchor_x,
+            anchor_y: o.anchor_y,
+            pad_color: o.pad_color.clone(),
+            zoom_frames: o.zoom_frames,
+        });
+
+        let input = PathBuf::from(&input_clip);
+        let game_path = PathBuf::from(gdir.as_str());
+        let render_mode = mode.clone();
+        let eid = event_id.clone();
+        let sc = scorer.clone();
+        let a1 = assist1.clone();
+        let a2 = assist2.clone();
+        let cli_owned = cli.clone();
+        let et = event_type;
+
+        let result = tokio::task::spawn_blocking(move || {
+            let params = render_ops::CliRenderParams {
+                cli_path: &cli_owned,
+                config_path: config_path.as_deref(),
+                input_clip: &input,
+                game_dir: &game_path,
+                profile_name: &first_profile,
+                event_id: eid.as_deref(),
+                mode: render_mode.as_deref(),
+                overrides: ovr.as_ref(),
+                scorer: sc.as_deref(),
+                assist1: a1.as_deref(),
+                assist2: a2.as_deref(),
+                iterate: true,
+                event_type: et.as_deref(),
+            };
+            render_ops::render_via_cli(&params)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let entries = result?;
+        return serde_json::to_value(&entries).map_err(|e| e.to_string());
+    }
+
+    // ── Native backend fallback ───────────────────────────────────────
     let backend = state.media_backend.clone();
     let config = state
         .config
@@ -203,7 +341,6 @@ pub async fn render_iteration(
     let job_id = uuid::Uuid::new_v4().to_string();
     let reporter = ProgressReporter::new(app, job_id.clone());
 
-    // Build event metadata from game state + player params
     let event_meta = game_dir.as_deref().and_then(|gdir| {
         build_event_metadata(
             gdir,
@@ -255,7 +392,6 @@ pub async fn render_iteration(
 
     let mut entries = result?;
 
-    // Tag entries with event_id and save to game state
     if let Some(ref eid) = eid {
         for entry in &mut entries {
             entry.event_id = eid.clone();
