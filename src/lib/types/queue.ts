@@ -13,6 +13,7 @@ export interface QueueItem {
   overrides?: RenderOverrides;
   pluginProfile?: string;
   mode?: "short" | "apply";
+  debug?: boolean;
   scorer?: string;
   assist1?: string;
   assist2?: string;

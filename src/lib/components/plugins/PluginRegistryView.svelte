@@ -7,6 +7,9 @@
     getVersionInfo_,
     loadVersionInfo,
   } from "$lib/stores/plugins.svelte";
+  import { isPluginInstalled, isCliAvailable, refreshCliStatus } from "$lib/stores/cli.svelte";
+  import { installPluginViaCli } from "$lib/ipc/plugins";
+  import { log } from "$lib/stores/log.svelte";
 
   let registryPlugins = $derived(getRegistry());
   let regLoading = $derived(isRegistryLoading());
@@ -16,6 +19,10 @@
   // Expanded detail panel per plugin
   let expandedPlugin = $state<string | null>(null);
 
+  // Install state per plugin
+  let installingPlugin = $state<string | null>(null);
+  let installError = $state<string | null>(null);
+
   $effect(() => {
     loadRegistry();
     loadVersionInfo();
@@ -23,6 +30,26 @@
 
   function toggleExpand(name: string) {
     expandedPlugin = expandedPlugin === name ? null : name;
+  }
+
+  async function handleInstall(name: string) {
+    installingPlugin = name;
+    installError = null;
+    try {
+      const result = await installPluginViaCli(name);
+      if (result.success) {
+        log.info("Registry", `Installed ${name}`);
+        await refreshCliStatus();
+      } else {
+        installError = result.output || "Installation failed";
+        log.error("Registry", `Failed to install ${name}: ${result.output}`);
+      }
+    } catch (err) {
+      installError = String(err);
+      log.error("Registry", `Failed to install ${name}: ${err}`);
+    } finally {
+      installingPlugin = null;
+    }
   }
 
   /** Group capabilities by hook lifecycle phase. */
@@ -92,6 +119,13 @@
                   <span class="px-1.5 py-0.5 rounded bg-bg text-text-muted text-[10px] font-mono">
                     {plugin.package}
                   </span>
+                  {#if isCliAvailable()}
+                    {#if isPluginInstalled(plugin.name)}
+                      <span class="px-1.5 py-0.5 rounded-full bg-green-900/60 text-green-300 text-[10px]">installed</span>
+                    {:else}
+                      <span class="px-1.5 py-0.5 rounded-full bg-bg text-text-muted text-[10px]">not installed</span>
+                    {/if}
+                  {/if}
                 </div>
                 <p class="text-sm text-text-muted mt-1">{plugin.description}</p>
               </div>
@@ -155,12 +189,26 @@
                 </div>
               </div>
 
-              <!-- Install instruction -->
-              <div class="mt-4 pt-3 border-t border-border/50">
-                <p class="text-xs text-text-muted mb-1.5">Install via pip:</p>
-                <code class="block px-3 py-2 bg-bg rounded text-xs font-mono text-text select-all">
-                  pip install {plugin.package}
-                </code>
+              <!-- Install action -->
+              <div class="mt-4 pt-3 border-t border-border/50 flex items-center gap-3">
+                {#if isCliAvailable() && isPluginInstalled(plugin.name)}
+                  <span class="px-3 py-1.5 text-xs font-medium text-green-300 border border-green-800 rounded-lg">Installed</span>
+                {:else if isCliAvailable()}
+                  <button
+                    class="px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-light text-text rounded-lg transition-colors disabled:opacity-50"
+                    disabled={installingPlugin === plugin.name}
+                    onclick={() => handleInstall(plugin.name)}
+                  >
+                    {installingPlugin === plugin.name ? "Installing..." : "Install"}
+                  </button>
+                  {#if installError && installingPlugin === null && expandedPlugin === plugin.name}
+                    <span class="text-xs text-accent">{installError}</span>
+                  {/if}
+                {:else}
+                  <code class="px-3 py-1.5 bg-bg rounded text-xs font-mono text-text select-all">
+                    pip install {plugin.package}
+                  </code>
+                {/if}
               </div>
             </div>
           {/if}

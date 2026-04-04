@@ -96,6 +96,31 @@
     });
   });
 
+  // Deterministic color palette for event type badges
+  const EVENT_TYPE_COLORS: [string, string][] = [
+    ["#1E3A5F", "#7EB8E6"],  // deep blue / light blue
+    ["#3B1F2B", "#D4849A"],  // plum / pink
+    ["#1A3C34", "#6FCF97"],  // forest / mint
+    ["#3D2C0A", "#E2B93B"],  // brown / gold
+    ["#2E1A47", "#B48EE0"],  // indigo / lavender
+    ["#3C1414", "#E07A7A"],  // maroon / salmon
+    ["#0D3B3B", "#5CC9C9"],  // teal dark / teal light
+    ["#3A2A0A", "#D4A05A"],  // dark amber / amber
+  ];
+  const CLIP_COLORS: [string, string] = ["#30363D", "#8B949E"]; // muted default for "clip"
+
+  function eventTypeColorPair(type: string): [string, string] {
+    if (!type || type === "clip") return CLIP_COLORS;
+    let hash = 0;
+    for (let i = 0; i < type.length; i++) {
+      hash = ((hash << 5) - hash + type.charCodeAt(i)) | 0;
+    }
+    return EVENT_TYPE_COLORS[Math.abs(hash) % EVENT_TYPE_COLORS.length];
+  }
+
+  function eventTypeBg(type: string): string { return eventTypeColorPair(type)[0]; }
+  function eventTypeFg(type: string): string { return eventTypeColorPair(type)[1]; }
+
   function toggleSort(field: SortField) {
     if (sortField === field) {
       sortAsc = !sortAsc;
@@ -524,7 +549,8 @@
                         </div>
                       {:else}
                         <span
-                          class="hover:underline hover:decoration-dotted cursor-text"
+                          class="inline-block px-2 py-0.5 rounded text-xs font-semibold cursor-text hover:opacity-80"
+                          style="background-color: {eventTypeBg(event.event_type)}; color: {eventTypeFg(event.event_type)}"
                           ondblclick={(e) => { e.stopPropagation(); startEdit(event, "event_type"); }}
                         >
                           {event.event_type || "clip"}

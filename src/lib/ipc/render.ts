@@ -14,6 +14,8 @@ export async function renderShort(
   scorer?: string,
   assist1?: string,
   assist2?: string,
+  debug?: boolean,
+  configPath?: string,
 ): Promise<RenderEntry> {
   return invoke<RenderEntry>("render_short", {
     inputClip,
@@ -26,6 +28,8 @@ export async function renderShort(
     scorer: scorer ?? null,
     assist1: assist1 ?? null,
     assist2: assist2 ?? null,
+    debug: debug ?? null,
+    configPath: configPath ?? null,
   });
 }
 
@@ -40,6 +44,8 @@ export async function renderIteration(
   scorer?: string,
   assist1?: string,
   assist2?: string,
+  debug?: boolean,
+  configPath?: string,
 ): Promise<RenderEntry[]> {
   return invoke<RenderEntry[]>("render_iteration", {
     inputClip,
@@ -52,6 +58,8 @@ export async function renderIteration(
     scorer: scorer ?? null,
     assist1: assist1 ?? null,
     assist2: assist2 ?? null,
+    debug: debug ?? null,
+    configPath: configPath ?? null,
   });
 }
 

@@ -4,6 +4,8 @@ mod commands;
 mod models;
 mod orchestration;
 mod state;
+#[cfg(test)]
+mod test_utils;
 
 use std::sync::{Arc, Mutex};
 
@@ -63,6 +65,7 @@ fn main() {
             // Media
             commands::media::probe_clip,
             commands::media::open_in_finder,
+            commands::media::open_file,
             commands::media::file_exists,
             // Render
             commands::render::render_short,
@@ -102,6 +105,7 @@ fn main() {
             // Hooks (plugin execution via CLI)
             commands::hooks::detect_reeln_cli,
             commands::hooks::get_cli_version,
+            commands::hooks::install_plugin_via_cli,
             commands::hooks::execute_plugin_hook,
             // Tournaments
             commands::tournaments::list_tournament_metadata,

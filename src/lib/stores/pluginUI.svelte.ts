@@ -5,6 +5,7 @@
 
 import type { PluginUIField, PluginUIContributions, RegistryPlugin } from "$lib/types/plugin";
 import { fetchPluginRegistry, listConfigProfiles, listPluginsForProfile } from "$lib/ipc/plugins";
+import { isPluginInstalled, isCliAvailable } from "$lib/stores/cli.svelte";
 import { log } from "$lib/stores/log.svelte";
 
 interface PluginFieldGroup {
@@ -48,6 +49,7 @@ export function getActiveFieldsForScreen(screen: "render_options" | "settings" |
   const groups: PluginFieldGroup[] = [];
   for (const plugin of registry) {
     if (!enabledPlugins.has(plugin.name)) continue;
+    if (isCliAvailable() && !isPluginInstalled(plugin.name)) continue;
     const contributions = plugin.ui_contributions as PluginUIContributions | undefined;
     if (!contributions) continue;
     const screenData = contributions[screen];

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { QueueItem } from "$lib/types/queue";
 import type { IterationItem, RenderOverrides } from "$lib/types/render";
 import { renderShort, renderIteration } from "$lib/ipc/render";
+import { listConfigProfiles } from "$lib/ipc/plugins";
 import { log } from "$lib/stores/log.svelte";
 
 let queue = $state<QueueItem[]>([]);
@@ -57,6 +58,7 @@ export function addToQueue(item: {
   overrides?: RenderOverrides;
   pluginProfile?: string;
   mode?: "short" | "apply";
+  debug?: boolean;
   scorer?: string;
   assist1?: string;
   assist2?: string;
@@ -91,6 +93,19 @@ export function reorderQueue(fromIdx: number, toIdx: number): void {
   persist();
 }
 
+/** Resolve a plugin profile name (e.g. "google-test") to its config file path. */
+async function resolveProfilePath(profileName?: string): Promise<string | undefined> {
+  if (!profileName) return undefined;
+  try {
+    const profiles = await listConfigProfiles();
+    const match = profiles.find((p) => p.name === profileName);
+    return match?.path;
+  } catch {
+    log.error("RenderQueue", `Failed to resolve plugin profile '${profileName}'`);
+    return undefined;
+  }
+}
+
 async function renderItem(item: QueueItem): Promise<void> {
   queue = queue.map((q) =>
     q.id === item.id ? { ...q, status: "rendering" as const } : q,
@@ -99,6 +114,8 @@ async function renderItem(item: QueueItem): Promise<void> {
 
   try {
     const outputDir = item.gameDir + "/renders";
+    const configPath = await resolveProfilePath(item.pluginProfile);
+
     if (item.profiles.length === 1) {
       const profile = item.profiles[0];
       const mergedOverrides = item.overrides
@@ -115,6 +132,8 @@ async function renderItem(item: QueueItem): Promise<void> {
         item.scorer,
         item.assist1,
         item.assist2,
+        item.debug,
+        configPath,
       );
       queue = queue.map((q) =>
         q.id === item.id
@@ -139,6 +158,8 @@ async function renderItem(item: QueueItem): Promise<void> {
         item.scorer,
         item.assist1,
         item.assist2,
+        item.debug,
+        configPath,
       );
       queue = queue.map((q) =>
         q.id === item.id

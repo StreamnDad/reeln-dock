@@ -1,13 +1,12 @@
 <script lang="ts">
   import { convertFileSrc } from "@tauri-apps/api/core";
-  import { tick } from "svelte";
   import type { GameEvent, GameSummary, RenderEntry } from "$lib/types/game";
   import type { EventTypeEntry, RenderProfile } from "$lib/types/config";
   import type { RenderOverrides, IterationItem } from "$lib/types/render";
   import { probeClip, openInFinder } from "$lib/ipc/media";
   import { updateGameEvent, quickTagEvent } from "$lib/ipc/games";
   import { loadTeamRoster, type RosterEntry } from "$lib/ipc/teams";
-  import { renderShort, renderIteration, renderPreview, deletePreview, listRenderProfiles } from "$lib/ipc/render";
+  import { renderPreview, deletePreview, listRenderProfiles } from "$lib/ipc/render";
   import { listConfigProfiles } from "$lib/ipc/plugins";
   import type { ConfigProfile } from "$lib/types/plugin";
   import { addToQueue as addToRenderQueue, isClipInQueue } from "$lib/stores/renderQueue.svelte";
@@ -53,7 +52,6 @@
   // Persisted across navigation via uiPrefs store (read via getter, write via setter)
   let autoPlay = $derived(uiPrefs.getAutoPlay());
   let autoAdvance = $derived(uiPrefs.getAutoAdvance());
-  let showRender = $derived(uiPrefs.getShowRender());
   let showDetails = $derived(uiPrefs.getShowDetails());
   let showMediaInfo = $derived(uiPrefs.getShowMediaInfo());
 
@@ -83,6 +81,7 @@
 
   // Queue state
   let queueAdded = $state(false);
+  let debugEnabled = $state(false);
 
   // Roster data for player assignment
   let homeRoster = $state<RosterEntry[]>([]);
@@ -270,10 +269,6 @@
       const newState = await quickTagEvent(game.dir_path, event.id, typeName, team);
       onUpdateGame?.(game.dir_path, (g) => ({ ...g, state: newState }));
       log.info("ClipReview", `Tagged ${event.id} as ${team ? team + " " : ""}${typeName}`);
-      if (autoAdvance) {
-        await tick();
-        onNext?.();
-      }
     } catch (err) {
       log.error("ClipReview", `Quick tag failed: ${err}`);
     }
@@ -377,44 +372,6 @@
     return Object.keys(clean).length > 0 ? clean : undefined;
   }
 
-  async function handleRender() {
-    if (renderQueue.length === 0) return;
-    renderLoading = true;
-    renderError = "";
-    renderSuccess = "";
-    renderResult = null;
-    try {
-      const outputDir = game.dir_path + "/renders";
-      const effectiveOverrides = cleanOverrides(overrides);
-      let resultEntry: RenderEntry | null = null;
-      if (renderQueue.length === 1) {
-        const item = renderQueue[0];
-        const mergedOverrides = effectiveOverrides ? { ...effectiveOverrides, ...item.overrides } : item.overrides;
-        const entry = await renderShort(fullClipPath, outputDir, item.profile_name, event.id, game.dir_path, mergedOverrides, renderMode, currentScorer || undefined, currentAssist1 || undefined, currentAssist2 || undefined);
-        resultEntry = entry;
-      } else {
-        const items: IterationItem[] = renderQueue.map((item) => ({
-          profile_name: item.profile_name,
-          overrides: effectiveOverrides ? { ...effectiveOverrides, ...item.overrides } : item.overrides,
-        }));
-        const entries = await renderIteration(fullClipPath, outputDir, items, event.id, game.dir_path, concatOutput, renderMode, currentScorer || undefined, currentAssist1 || undefined, currentAssist2 || undefined);
-        resultEntry = entries[0] ?? null;
-      }
-      const { getGameState } = await import("$lib/ipc/games");
-      const newState = await getGameState(game.dir_path);
-      onUpdateGame?.(game.dir_path, (g) => ({ ...g, state: newState }));
-      // Auto-show the result
-      if (resultEntry) {
-        renderResult = resultEntry;
-      }
-    } catch (err) {
-      renderError = String(err);
-      log.error("ClipReview", `Render failed: ${err}`);
-    } finally {
-      renderLoading = false;
-    }
-  }
-
   async function handleRenderPreview() {
     renderLoading = true;
     renderError = "";
@@ -458,6 +415,7 @@
       overrides: cleanOverrides(overrides),
       pluginProfile: selectedPluginProfile || undefined,
       mode: renderMode,
+      debug: debugEnabled || undefined,
       scorer: currentScorer || undefined,
       assist1: currentAssist1 || undefined,
       assist2: currentAssist2 || undefined,
@@ -646,15 +604,8 @@
     </div>
   {/if}
 
-  <!-- Collapsible: Render Options -->
-  <button
-    class="w-full text-left text-xs text-text-muted hover:text-text transition-colors flex items-center gap-1"
-    onclick={() => uiPrefs.setShowRender(!showRender)}
-  >
-    <span class="transition-transform" class:rotate-90={showRender}>&#9654;</span>
-    Render Options
-  </button>
-  {#if showRender}
+  <!-- Render Options (always visible) -->
+  <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">Render Options</h3>
     <div class="bg-surface rounded-lg border border-border p-4 space-y-3">
       {#if renderError}
         <div class="px-3 py-2 bg-red-900/30 border border-red-800 rounded-lg text-sm text-red-300">{renderError}</div>
@@ -662,6 +613,25 @@
       {#if renderSuccess}
         <div class="px-3 py-2 bg-green-900/30 border border-green-800 rounded-lg text-sm text-green-300">{renderSuccess}</div>
       {/if}
+
+      <!-- Plugin profile (requires CLI) — top of render options -->
+      <CliGate requires="cli" showMessage={true}>
+        {#if pluginProfiles.length > 0}
+          <div>
+            <label class="block text-sm font-medium text-text mb-1" for="clip-plugin-profile">Plugin Profile</label>
+            <select
+              id="clip-plugin-profile"
+              bind:value={selectedPluginProfile}
+              class="w-full px-2 py-2 bg-bg border border-border rounded-lg text-sm text-text focus:outline-none focus:border-secondary"
+            >
+              <option value="">None (no plugins)</option>
+              {#each pluginProfiles as pp}
+                <option value={pp.name}>{pp.name}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
+      </CliGate>
 
       {#if renderQueue.length > 0}
         <div class="space-y-1">
@@ -734,25 +704,6 @@
         </div>
       </div>
 
-      <!-- Plugin profile (requires CLI) -->
-      <CliGate requires="cli" showMessage={true}>
-        {#if pluginProfiles.length > 0}
-          <div>
-            <label class="block text-xs text-text-muted mb-1" for="clip-plugin-profile">Plugin Profile</label>
-            <select
-              id="clip-plugin-profile"
-              bind:value={selectedPluginProfile}
-              class="w-full px-2 py-1.5 bg-bg border border-border rounded-lg text-xs text-text focus:outline-none focus:border-secondary"
-            >
-              <option value="">None (no plugins)</option>
-              {#each pluginProfiles as pp}
-                <option value={pp.name}>{pp.name}</option>
-              {/each}
-            </select>
-          </div>
-        {/if}
-      </CliGate>
-
       <button
         class="w-full text-left text-xs text-text-muted hover:text-text transition-colors flex items-center gap-1"
         onclick={() => showOverrides = !showOverrides}
@@ -819,6 +770,11 @@
         </div>
       {/if}
 
+      <label class="flex items-center gap-2 text-xs text-text-muted cursor-pointer">
+        <input type="checkbox" bind:checked={debugEnabled} class="accent-secondary" />
+        Debug (write artifacts + index.html)
+      </label>
+
       {#if clipAlreadyInQueue}
         <div class="px-2 py-1.5 bg-yellow-900/20 border border-yellow-800/50 rounded text-[11px] text-yellow-400">
           This clip is already in the render queue
@@ -828,17 +784,10 @@
       <div class="flex gap-2">
         <button
           class="flex-1 px-3 py-2 bg-primary hover:bg-primary-light text-text rounded-lg text-sm font-medium transition-colors disabled:opacity-50 text-center"
-          disabled={renderLoading || renderQueue.length === 0}
-          onclick={handleRender}
-        >
-          {renderLoading ? "Rendering..." : renderQueue.length > 1 ? `Render ${renderQueue.length} Formats` : "Render Short"}
-        </button>
-        <button
-          class="px-3 py-2 bg-surface border border-border rounded-lg text-sm hover:bg-surface-hover transition-colors disabled:opacity-50 text-center whitespace-nowrap"
           disabled={renderQueue.length === 0}
           onclick={handleAddToQueue}
         >
-          {queueAdded ? "Added" : "+ Queue"}
+          {queueAdded ? "Added to Queue" : "+ Queue"}
         </button>
       </div>
       <!-- Preview with profile selector -->
@@ -863,7 +812,6 @@
         </button>
       </div>
     </div>
-  {/if}
 
   <!-- Collapsible: Event Details -->
   <button

@@ -525,3 +525,258 @@ fn reload_if_active(profile_path: &str, state: &AppState) -> Result<(), String> 
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── derive_profile_name ────────────────────────────────────────
+
+    #[test]
+    fn derive_profile_name_config_json_returns_default() {
+        assert_eq!(derive_profile_name("config.json"), "default");
+    }
+
+    #[test]
+    fn derive_profile_name_config_with_profile() {
+        assert_eq!(
+            derive_profile_name("config.production-google.json"),
+            "production-google"
+        );
+    }
+
+    #[test]
+    fn derive_profile_name_config_with_multi_dash() {
+        assert_eq!(
+            derive_profile_name("config.meta-ig-test.json"),
+            "meta-ig-test"
+        );
+    }
+
+    #[test]
+    fn derive_profile_name_non_config_prefix() {
+        assert_eq!(derive_profile_name("game.v1.json"), "game.v1");
+    }
+
+    #[test]
+    fn derive_profile_name_simple() {
+        assert_eq!(derive_profile_name("something.json"), "something");
+    }
+
+    // ── list_plugins_for_profile ───────────────────────────────────
+
+    fn write_config_json(dir: &std::path::Path, json: &serde_json::Value) -> String {
+        let path = dir.join("config.json");
+        let content = serde_json::to_string_pretty(json).unwrap();
+        std::fs::write(&path, content).unwrap();
+        path.display().to_string()
+    }
+
+    #[test]
+    fn list_plugins_enabled_and_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config_json(
+            dir.path(),
+            &serde_json::json!({
+                "config_version": 1,
+                "plugins": {
+                    "enabled": ["youtube", "openai"],
+                    "disabled": ["discord"],
+                    "settings": {
+                        "youtube": {"channel": "test"},
+                        "openai": {},
+                        "discord": {"webhook": "https://example.com"}
+                    }
+                }
+            }),
+        );
+
+        let plugins = list_plugins_for_profile(path).unwrap();
+
+        // sorted by name
+        assert_eq!(plugins.len(), 3);
+
+        let discord = plugins.iter().find(|p| p.name == "discord").unwrap();
+        assert!(!discord.enabled);
+        assert_eq!(discord.settings["webhook"], "https://example.com");
+
+        let openai = plugins.iter().find(|p| p.name == "openai").unwrap();
+        assert!(openai.enabled);
+
+        let youtube = plugins.iter().find(|p| p.name == "youtube").unwrap();
+        assert!(youtube.enabled);
+        assert_eq!(youtube.settings["channel"], "test");
+    }
+
+    #[test]
+    fn list_plugins_settings_only_plugin_shows_as_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config_json(
+            dir.path(),
+            &serde_json::json!({
+                "config_version": 1,
+                "plugins": {
+                    "enabled": ["youtube"],
+                    "disabled": [],
+                    "settings": {
+                        "youtube": {"channel": "test"},
+                        "standalone": {"key": "val"}
+                    }
+                }
+            }),
+        );
+
+        let plugins = list_plugins_for_profile(path).unwrap();
+        assert_eq!(plugins.len(), 2);
+
+        let standalone = plugins.iter().find(|p| p.name == "standalone").unwrap();
+        assert!(!standalone.enabled);
+        assert_eq!(standalone.settings["key"], "val");
+    }
+
+    #[test]
+    fn list_plugins_empty_plugins_section() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config_json(
+            dir.path(),
+            &serde_json::json!({
+                "config_version": 1,
+                "plugins": {
+                    "enabled": [],
+                    "disabled": [],
+                    "settings": {}
+                }
+            }),
+        );
+
+        let plugins = list_plugins_for_profile(path).unwrap();
+        assert!(plugins.is_empty());
+    }
+
+    #[test]
+    fn list_plugins_with_settings_no_explicit_lists() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config_json(
+            dir.path(),
+            &serde_json::json!({
+                "config_version": 1,
+                "plugins": {
+                    "enabled": ["openai"],
+                    "disabled": ["discord"],
+                    "settings": {
+                        "youtube": {"channel": "test"},
+                        "openai": {},
+                        "standalone": {"key": "val"}
+                    }
+                }
+            }),
+        );
+
+        let plugins = list_plugins_for_profile(path).unwrap();
+        assert_eq!(plugins.len(), 4);
+
+        // openai is in enabled
+        let openai = plugins.iter().find(|p| p.name == "openai").unwrap();
+        assert!(openai.enabled);
+
+        // discord is in disabled
+        let discord = plugins.iter().find(|p| p.name == "discord").unwrap();
+        assert!(!discord.enabled);
+
+        // youtube and standalone have settings but aren't in either list → disabled
+        let youtube = plugins.iter().find(|p| p.name == "youtube").unwrap();
+        assert!(!youtube.enabled);
+
+        let standalone = plugins.iter().find(|p| p.name == "standalone").unwrap();
+        assert!(!standalone.enabled);
+    }
+
+    // ── get_enforce_hooks ──────────────────────────────────────────
+
+    #[test]
+    fn get_enforce_hooks_true() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config_json(
+            dir.path(),
+            &serde_json::json!({
+                "config_version": 1,
+                "plugins": {
+                    "enabled": [],
+                    "disabled": [],
+                    "settings": {},
+                    "enforce_hooks": true
+                }
+            }),
+        );
+
+        assert!(get_enforce_hooks(path).unwrap());
+    }
+
+    #[test]
+    fn get_enforce_hooks_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config_json(
+            dir.path(),
+            &serde_json::json!({
+                "config_version": 1,
+                "plugins": {
+                    "enabled": [],
+                    "disabled": [],
+                    "settings": {},
+                    "enforce_hooks": false
+                }
+            }),
+        );
+
+        assert!(!get_enforce_hooks(path).unwrap());
+    }
+
+    #[test]
+    fn get_enforce_hooks_defaults_to_true_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config_json(
+            dir.path(),
+            &serde_json::json!({
+                "config_version": 1,
+                "plugins": {
+                    "enabled": [],
+                    "disabled": [],
+                    "settings": {}
+                }
+            }),
+        );
+
+        assert!(get_enforce_hooks(path).unwrap());
+    }
+
+    // ── load_raw_config + save_raw_config ──────────────────────────
+
+    #[test]
+    fn raw_config_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("roundtrip.json");
+        let path_str = path.display().to_string();
+
+        let original = serde_json::json!({
+            "config_version": 1,
+            "plugins": {
+                "enabled": ["youtube"],
+                "disabled": [],
+                "settings": {"youtube": {"channel": "test"}}
+            }
+        });
+
+        save_raw_config(&path_str, &original).unwrap();
+        let loaded = load_raw_config(&path_str).unwrap();
+
+        assert_eq!(original, loaded);
+    }
+
+    #[test]
+    fn load_raw_config_missing_file_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nonexistent.json");
+        let result = load_raw_config(&path.display().to_string());
+        assert!(result.is_err());
+    }
+}
+

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { loadDockSettings } from "$lib/ipc/config";
+  import { initCliStatus } from "$lib/stores/cli.svelte";
   import type { AppConfig } from "$lib/types/config";
   import type { DockSettings } from "$lib/types/dock";
 
@@ -17,17 +18,23 @@
   $effect(() => {
     const timer = setTimeout(async () => {
       try {
-        const result = await loadDockSettings();
+        // Load dock settings and detect CLI in parallel
+        const [settingsResult] = await Promise.allSettled([
+          loadDockSettings(),
+          initCliStatus(),
+        ]);
+
+        const result = settingsResult.status === "fulfilled" ? settingsResult.value : null;
         visible = false;
         setTimeout(() => {
-          if (result.config) {
+          if (result?.config) {
             onDone({
               hasConfig: true,
               config: result.config,
               settings: result.settings,
             });
           } else {
-            onDone({ hasConfig: false, settings: result.settings });
+            onDone({ hasConfig: false, settings: result?.settings });
           }
         }, 500);
       } catch {

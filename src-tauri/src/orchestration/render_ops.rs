@@ -24,6 +24,7 @@ pub struct CliRenderParams<'a> {
     pub assist2: Option<&'a str>,
     pub iterate: bool,
     pub event_type: Option<&'a str>,
+    pub debug: bool,
 }
 
 /// Render via the reeln CLI subprocess. Returns new RenderEntries added to game state.
@@ -122,6 +123,11 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
         cmd.arg("--iterate");
     }
 
+    // Debug artifacts
+    if params.debug {
+        cmd.arg("--debug");
+    }
+
     // Disable branding — native backend doesn't have subtitles filter (libass)
     if subcommand == "short" {
         cmd.arg("--no-branding");
@@ -155,7 +161,7 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
     // If CLI didn't record entries (iteration path doesn't save to game.json),
     // parse the CLI output to find the result file, or search common locations
     if new_entries.is_empty() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let _stdout = String::from_utf8_lossy(&output.stdout);
         let stem = params.input_clip
             .file_stem()
             .and_then(|s| s.to_str())
@@ -754,4 +760,1202 @@ pub fn list_render_profiles(config: &AppConfig) -> Vec<RenderProfile> {
             p
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    /// Create a script that dumps its CLI args to a file, then exits with code 1
+    /// so render_via_cli returns early (before trying to load game state post-render).
+    fn make_arg_dump_script(dir: &Path, args_file: &Path) -> PathBuf {
+        let script = dir.join("fake_reeln.sh");
+        let mut f = std::fs::File::create(&script).unwrap();
+        writeln!(f, "#!/bin/sh").unwrap();
+        writeln!(
+            f,
+            "printf '%s\\n' \"$@\" > \"{}\"",
+            args_file.display()
+        )
+        .unwrap();
+        writeln!(f, "echo 'test failure' >&2").unwrap();
+        writeln!(f, "exit 1").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        script
+    }
+
+    fn read_dumped_args(args_file: &Path) -> Vec<String> {
+        std::fs::read_to_string(args_file)
+            .unwrap()
+            .lines()
+            .map(|l| l.to_string())
+            .collect()
+    }
+
+    // -----------------------------------------------------------------------
+    // render_via_cli — CLI arg construction
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_cli_args_short_mode_minimal() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args.txt");
+        let script = make_arg_dump_script(dir.path(), &args_file);
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let game_dir = dir.path().join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+
+        let params = CliRenderParams {
+            cli_path: script.to_str().unwrap(),
+            config_path: None,
+            input_clip: &input,
+            game_dir: &game_dir,
+            profile_name: "tiktok",
+            event_id: None,
+            mode: None, // defaults to "short"
+            overrides: None,
+            scorer: None,
+            assist1: None,
+            assist2: None,
+            iterate: false,
+            event_type: None,
+            debug: false,
+        };
+
+        let _ = render_via_cli(&params); // will error — we only care about args
+        let args = read_dumped_args(&args_file);
+
+        assert_eq!(args[0], "render");
+        assert_eq!(args[1], "short");
+        assert_eq!(args[2], input.to_str().unwrap());
+        assert_eq!(args[3], "--render-profile");
+        assert_eq!(args[4], "tiktok");
+        assert_eq!(args[5], "--game-dir");
+        assert_eq!(args[6], game_dir.to_str().unwrap());
+        // --no-branding appended for short mode
+        assert!(args.contains(&"--no-branding".to_string()));
+        // No --config, --event, --iterate, --debug
+        assert!(!args.contains(&"--config".to_string()));
+        assert!(!args.contains(&"--event".to_string()));
+        assert!(!args.contains(&"--iterate".to_string()));
+        assert!(!args.contains(&"--debug".to_string()));
+    }
+
+    #[test]
+    fn test_cli_args_apply_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args.txt");
+        let script = make_arg_dump_script(dir.path(), &args_file);
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let game_dir = dir.path().join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+
+        let params = CliRenderParams {
+            cli_path: script.to_str().unwrap(),
+            config_path: None,
+            input_clip: &input,
+            game_dir: &game_dir,
+            profile_name: "full",
+            event_id: None,
+            mode: Some("apply"),
+            overrides: None,
+            scorer: None,
+            assist1: None,
+            assist2: None,
+            iterate: false,
+            event_type: None,
+            debug: false,
+        };
+
+        let _ = render_via_cli(&params);
+        let args = read_dumped_args(&args_file);
+
+        assert_eq!(args[0], "render");
+        assert_eq!(args[1], "apply");
+        // --no-branding should NOT be present for apply mode
+        assert!(!args.contains(&"--no-branding".to_string()));
+    }
+
+    #[test]
+    fn test_cli_args_with_config_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args.txt");
+        let script = make_arg_dump_script(dir.path(), &args_file);
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let game_dir = dir.path().join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+
+        let params = CliRenderParams {
+            cli_path: script.to_str().unwrap(),
+            config_path: Some("/config/google-test.json"),
+            input_clip: &input,
+            game_dir: &game_dir,
+            profile_name: "tiktok",
+            event_id: None,
+            mode: None,
+            overrides: None,
+            scorer: None,
+            assist1: None,
+            assist2: None,
+            iterate: false,
+            event_type: None,
+            debug: false,
+        };
+
+        let _ = render_via_cli(&params);
+        let args = read_dumped_args(&args_file);
+
+        let idx = args.iter().position(|a| a == "--config").unwrap();
+        assert_eq!(args[idx + 1], "/config/google-test.json");
+    }
+
+    #[test]
+    fn test_cli_args_with_event_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args.txt");
+        let script = make_arg_dump_script(dir.path(), &args_file);
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let game_dir = dir.path().join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+
+        let params = CliRenderParams {
+            cli_path: script.to_str().unwrap(),
+            config_path: None,
+            input_clip: &input,
+            game_dir: &game_dir,
+            profile_name: "tiktok",
+            event_id: Some("goal_1"),
+            mode: None,
+            overrides: None,
+            scorer: None,
+            assist1: None,
+            assist2: None,
+            iterate: false,
+            event_type: None,
+            debug: false,
+        };
+
+        let _ = render_via_cli(&params);
+        let args = read_dumped_args(&args_file);
+
+        let idx = args.iter().position(|a| a == "--event").unwrap();
+        assert_eq!(args[idx + 1], "goal_1");
+    }
+
+    #[test]
+    fn test_cli_args_empty_event_id_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args.txt");
+        let script = make_arg_dump_script(dir.path(), &args_file);
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let game_dir = dir.path().join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+
+        let params = CliRenderParams {
+            cli_path: script.to_str().unwrap(),
+            config_path: None,
+            input_clip: &input,
+            game_dir: &game_dir,
+            profile_name: "tiktok",
+            event_id: Some(""),
+            mode: None,
+            overrides: None,
+            scorer: None,
+            assist1: None,
+            assist2: None,
+            iterate: false,
+            event_type: None,
+            debug: false,
+        };
+
+        let _ = render_via_cli(&params);
+        let args = read_dumped_args(&args_file);
+        assert!(!args.contains(&"--event".to_string()));
+    }
+
+    #[test]
+    fn test_cli_args_overrides_short_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args.txt");
+        let script = make_arg_dump_script(dir.path(), &args_file);
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let game_dir = dir.path().join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+
+        let overrides = RenderOverrides {
+            crop_mode: Some("pad".to_string()),
+            scale: Some(0.5),
+            speed: Some(0.75),
+            smart: Some(true),
+            zoom_frames: Some(15),
+            pad_color: Some("white".to_string()),
+            ..Default::default()
+        };
+
+        let params = CliRenderParams {
+            cli_path: script.to_str().unwrap(),
+            config_path: None,
+            input_clip: &input,
+            game_dir: &game_dir,
+            profile_name: "tiktok",
+            event_id: None,
+            mode: None,
+            overrides: Some(&overrides),
+            scorer: None,
+            assist1: None,
+            assist2: None,
+            iterate: false,
+            event_type: None,
+            debug: false,
+        };
+
+        let _ = render_via_cli(&params);
+        let args = read_dumped_args(&args_file);
+
+        let crop_idx = args.iter().position(|a| a == "--crop").unwrap();
+        assert_eq!(args[crop_idx + 1], "pad");
+
+        let scale_idx = args.iter().position(|a| a == "--scale").unwrap();
+        assert_eq!(args[scale_idx + 1], "0.5");
+
+        let speed_idx = args.iter().position(|a| a == "--speed").unwrap();
+        assert_eq!(args[speed_idx + 1], "0.75");
+
+        assert!(args.contains(&"--smart".to_string()));
+
+        let zf_idx = args.iter().position(|a| a == "--zoom-frames").unwrap();
+        assert_eq!(args[zf_idx + 1], "15");
+
+        let pc_idx = args.iter().position(|a| a == "--pad-color").unwrap();
+        assert_eq!(args[pc_idx + 1], "white");
+    }
+
+    #[test]
+    fn test_cli_args_overrides_skipped_in_apply_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args.txt");
+        let script = make_arg_dump_script(dir.path(), &args_file);
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let game_dir = dir.path().join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+
+        let overrides = RenderOverrides {
+            crop_mode: Some("pad".to_string()),
+            scale: Some(0.5),
+            smart: Some(true),
+            ..Default::default()
+        };
+
+        let params = CliRenderParams {
+            cli_path: script.to_str().unwrap(),
+            config_path: None,
+            input_clip: &input,
+            game_dir: &game_dir,
+            profile_name: "full",
+            event_id: None,
+            mode: Some("apply"),
+            overrides: Some(&overrides),
+            scorer: None,
+            assist1: None,
+            assist2: None,
+            iterate: false,
+            event_type: None,
+            debug: false,
+        };
+
+        let _ = render_via_cli(&params);
+        let args = read_dumped_args(&args_file);
+
+        // Overrides should NOT be passed in apply mode
+        assert!(!args.contains(&"--crop".to_string()));
+        assert!(!args.contains(&"--scale".to_string()));
+        assert!(!args.contains(&"--smart".to_string()));
+    }
+
+    #[test]
+    fn test_cli_args_scale_1_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args.txt");
+        let script = make_arg_dump_script(dir.path(), &args_file);
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let game_dir = dir.path().join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+
+        let overrides = RenderOverrides {
+            scale: Some(1.0), // should be skipped
+            speed: Some(1.0), // should be skipped
+            ..Default::default()
+        };
+
+        let params = CliRenderParams {
+            cli_path: script.to_str().unwrap(),
+            config_path: None,
+            input_clip: &input,
+            game_dir: &game_dir,
+            profile_name: "tiktok",
+            event_id: None,
+            mode: None,
+            overrides: Some(&overrides),
+            scorer: None,
+            assist1: None,
+            assist2: None,
+            iterate: false,
+            event_type: None,
+            debug: false,
+        };
+
+        let _ = render_via_cli(&params);
+        let args = read_dumped_args(&args_file);
+
+        assert!(!args.contains(&"--scale".to_string()));
+        assert!(!args.contains(&"--speed".to_string()));
+    }
+
+    #[test]
+    fn test_cli_args_scorer_and_assists() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args.txt");
+        let script = make_arg_dump_script(dir.path(), &args_file);
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let game_dir = dir.path().join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+
+        let params = CliRenderParams {
+            cli_path: script.to_str().unwrap(),
+            config_path: None,
+            input_clip: &input,
+            game_dir: &game_dir,
+            profile_name: "tiktok",
+            event_id: None,
+            mode: None,
+            overrides: None,
+            scorer: Some("Player One"),
+            assist1: Some("Player Two"),
+            assist2: Some("Player Three"),
+            iterate: false,
+            event_type: None,
+            debug: false,
+        };
+
+        let _ = render_via_cli(&params);
+        let args = read_dumped_args(&args_file);
+
+        let player_idx = args.iter().position(|a| a == "--player").unwrap();
+        assert_eq!(args[player_idx + 1], "Player One");
+
+        let assists_idx = args.iter().position(|a| a == "--assists").unwrap();
+        assert_eq!(args[assists_idx + 1], "Player Two,Player Three");
+    }
+
+    #[test]
+    fn test_cli_args_iterate_and_debug() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args.txt");
+        let script = make_arg_dump_script(dir.path(), &args_file);
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let game_dir = dir.path().join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+
+        let params = CliRenderParams {
+            cli_path: script.to_str().unwrap(),
+            config_path: None,
+            input_clip: &input,
+            game_dir: &game_dir,
+            profile_name: "tiktok",
+            event_id: None,
+            mode: None,
+            overrides: None,
+            scorer: None,
+            assist1: None,
+            assist2: None,
+            iterate: true,
+            event_type: Some("goal"),
+            debug: true,
+        };
+
+        let _ = render_via_cli(&params);
+        let args = read_dumped_args(&args_file);
+
+        assert!(args.contains(&"--iterate".to_string()));
+        assert!(args.contains(&"--debug".to_string()));
+
+        let et_idx = args.iter().position(|a| a == "--event-type").unwrap();
+        assert_eq!(args[et_idx + 1], "goal");
+    }
+
+    #[test]
+    fn test_cli_args_all_params_combined() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args.txt");
+        let script = make_arg_dump_script(dir.path(), &args_file);
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let game_dir = dir.path().join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+
+        let overrides = RenderOverrides {
+            crop_mode: Some("crop".to_string()),
+            scale: Some(0.8),
+            speed: Some(0.5),
+            smart: Some(true),
+            zoom_frames: Some(10),
+            pad_color: Some("black".to_string()),
+            ..Default::default()
+        };
+
+        let params = CliRenderParams {
+            cli_path: script.to_str().unwrap(),
+            config_path: Some("/config/google.json"),
+            input_clip: &input,
+            game_dir: &game_dir,
+            profile_name: "tiktok",
+            event_id: Some("goal_1"),
+            mode: None,
+            overrides: Some(&overrides),
+            scorer: Some("Scorer"),
+            assist1: Some("A1"),
+            assist2: Some("A2"),
+            iterate: true,
+            event_type: Some("goal"),
+            debug: true,
+        };
+
+        let _ = render_via_cli(&params);
+        let args = read_dumped_args(&args_file);
+
+        // Verify all args are present
+        assert_eq!(args[0], "render");
+        assert_eq!(args[1], "short");
+        assert!(args.contains(&"--config".to_string()));
+        assert!(args.contains(&"--event".to_string()));
+        assert!(args.contains(&"--crop".to_string()));
+        assert!(args.contains(&"--scale".to_string()));
+        assert!(args.contains(&"--speed".to_string()));
+        assert!(args.contains(&"--smart".to_string()));
+        assert!(args.contains(&"--zoom-frames".to_string()));
+        assert!(args.contains(&"--pad-color".to_string()));
+        assert!(args.contains(&"--player".to_string()));
+        assert!(args.contains(&"--assists".to_string()));
+        assert!(args.contains(&"--iterate".to_string()));
+        assert!(args.contains(&"--event-type".to_string()));
+        assert!(args.contains(&"--debug".to_string()));
+        assert!(args.contains(&"--no-branding".to_string()));
+    }
+
+    // -----------------------------------------------------------------------
+    // apply_overrides
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_apply_overrides_sets_all_fields() {
+        let mut profile = serde_json::from_str::<RenderProfile>("{}").unwrap();
+        let overrides = RenderOverrides {
+            crop_mode: Some("pad".to_string()),
+            scale: Some(0.5),
+            speed: Some(2.0),
+            smart: Some(true),
+            anchor_x: Some(0.3),
+            anchor_y: Some(0.7),
+            pad_color: Some("white".to_string()),
+            zoom_frames: None, // not applied in apply_overrides (only CLI flag)
+        };
+
+        apply_overrides(&mut profile, &overrides);
+
+        assert_eq!(profile.crop_mode, Some("pad".to_string()));
+        assert_eq!(profile.scale, Some(0.5));
+        assert_eq!(profile.speed, Some(2.0));
+        assert_eq!(profile.smart, Some(true));
+        assert_eq!(profile.anchor_x, Some(0.3));
+        assert_eq!(profile.anchor_y, Some(0.7));
+        assert_eq!(profile.pad_color, Some("white".to_string()));
+    }
+
+    #[test]
+    fn test_apply_overrides_none_preserves_existing() {
+        let mut profile = serde_json::from_str::<RenderProfile>("{}").unwrap();
+        profile.crop_mode = Some("crop".to_string());
+        profile.speed = Some(1.5);
+
+        let overrides = RenderOverrides::default(); // all None
+
+        apply_overrides(&mut profile, &overrides);
+
+        assert_eq!(profile.crop_mode, Some("crop".to_string()));
+        assert_eq!(profile.speed, Some(1.5));
+    }
+
+    // -----------------------------------------------------------------------
+    // build_render_plan — filter construction
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_build_render_plan_width_and_height_scale() {
+        let profile: RenderProfile = serde_json::from_value(serde_json::json!({
+            "name": "test",
+            "width": 1080,
+            "height": 1920
+        }))
+        .unwrap();
+        let config = AppConfig::default();
+        let plan = build_render_plan(
+            Path::new("/input.mp4"),
+            Path::new("/output.mp4"),
+            &profile,
+            &config,
+        );
+        assert!(plan.filters.contains(&"scale=1080:1920".to_string()));
+    }
+
+    #[test]
+    fn test_build_render_plan_crop_mode() {
+        let profile: RenderProfile = serde_json::from_value(serde_json::json!({
+            "name": "test",
+            "width": 1080,
+            "height": 1920,
+            "crop_mode": "crop"
+        }))
+        .unwrap();
+        let config = AppConfig::default();
+        let plan = build_render_plan(
+            Path::new("/input.mp4"),
+            Path::new("/output.mp4"),
+            &profile,
+            &config,
+        );
+        assert!(plan.filters.contains(&"crop=1080:1920".to_string()));
+        // Should NOT have a scale filter
+        assert!(!plan.filters.iter().any(|f| f.starts_with("scale=")));
+    }
+
+    #[test]
+    fn test_build_render_plan_pad_mode() {
+        let profile: RenderProfile = serde_json::from_value(serde_json::json!({
+            "name": "test",
+            "width": 1080,
+            "height": 1920,
+            "crop_mode": "pad",
+            "pad_color": "red"
+        }))
+        .unwrap();
+        let config = AppConfig::default();
+        let plan = build_render_plan(
+            Path::new("/input.mp4"),
+            Path::new("/output.mp4"),
+            &profile,
+            &config,
+        );
+        let pad_filter = plan.filters.iter().find(|f| f.contains("pad=")).unwrap();
+        assert!(pad_filter.contains("color=red"));
+        assert!(pad_filter.contains("scale=1080:1920:force_original_aspect_ratio=decrease"));
+    }
+
+    #[test]
+    fn test_build_render_plan_pad_mode_default_color() {
+        let profile: RenderProfile = serde_json::from_value(serde_json::json!({
+            "name": "test",
+            "width": 1080,
+            "height": 1920,
+            "crop_mode": "pad"
+        }))
+        .unwrap();
+        let config = AppConfig::default();
+        let plan = build_render_plan(
+            Path::new("/input.mp4"),
+            Path::new("/output.mp4"),
+            &profile,
+            &config,
+        );
+        let pad_filter = plan.filters.iter().find(|f| f.contains("pad=")).unwrap();
+        assert!(pad_filter.contains("color=black"));
+    }
+
+    #[test]
+    fn test_build_render_plan_width_only() {
+        let profile: RenderProfile = serde_json::from_value(serde_json::json!({
+            "name": "test",
+            "width": 720
+        }))
+        .unwrap();
+        let config = AppConfig::default();
+        let plan = build_render_plan(
+            Path::new("/input.mp4"),
+            Path::new("/output.mp4"),
+            &profile,
+            &config,
+        );
+        assert!(plan.filters.contains(&"scale=720:-2".to_string()));
+    }
+
+    #[test]
+    fn test_build_render_plan_height_only() {
+        let profile: RenderProfile = serde_json::from_value(serde_json::json!({
+            "name": "test",
+            "height": 480
+        }))
+        .unwrap();
+        let config = AppConfig::default();
+        let plan = build_render_plan(
+            Path::new("/input.mp4"),
+            Path::new("/output.mp4"),
+            &profile,
+            &config,
+        );
+        assert!(plan.filters.contains(&"scale=-2:480".to_string()));
+    }
+
+    #[test]
+    fn test_build_render_plan_speed_not_1() {
+        let profile: RenderProfile = serde_json::from_value(serde_json::json!({
+            "name": "test",
+            "speed": 0.5
+        }))
+        .unwrap();
+        let config = AppConfig::default();
+        let plan = build_render_plan(
+            Path::new("/input.mp4"),
+            Path::new("/output.mp4"),
+            &profile,
+            &config,
+        );
+        // pts_factor = 1.0 / 0.5 = 2.0
+        let setpts = plan.filters.iter().find(|f| f.starts_with("setpts=")).unwrap();
+        assert!(setpts.contains("2.0000"));
+        assert_eq!(plan.audio_filter, Some("atempo=0.5".to_string()));
+    }
+
+    #[test]
+    fn test_build_render_plan_speed_1_no_filter() {
+        let profile: RenderProfile = serde_json::from_value(serde_json::json!({
+            "name": "test",
+            "speed": 1.0
+        }))
+        .unwrap();
+        let config = AppConfig::default();
+        let plan = build_render_plan(
+            Path::new("/input.mp4"),
+            Path::new("/output.mp4"),
+            &profile,
+            &config,
+        );
+        assert!(!plan.filters.iter().any(|f| f.starts_with("setpts=")));
+        assert!(plan.audio_filter.is_none());
+    }
+
+    #[test]
+    fn test_build_render_plan_lut_filter() {
+        let profile: RenderProfile = serde_json::from_value(serde_json::json!({
+            "name": "test",
+            "lut": "/path/to/my.cube"
+        }))
+        .unwrap();
+        let config = AppConfig::default();
+        let plan = build_render_plan(
+            Path::new("/input.mp4"),
+            Path::new("/output.mp4"),
+            &profile,
+            &config,
+        );
+        assert!(plan.filters.contains(&"lut3d=/path/to/my.cube".to_string()));
+    }
+
+    #[test]
+    fn test_build_render_plan_speed_segments_uses_minimum() {
+        let profile: RenderProfile = serde_json::from_value(serde_json::json!({
+            "name": "test",
+            "speed_segments": [
+                {"speed": 0.8, "until": 5.0},
+                {"speed": 0.3, "until": 10.0},
+                {"speed": 1.5}
+            ]
+        }))
+        .unwrap();
+        let config = AppConfig::default();
+        let plan = build_render_plan(
+            Path::new("/input.mp4"),
+            Path::new("/output.mp4"),
+            &profile,
+            &config,
+        );
+        // Minimum speed is 0.3, pts_factor = 1.0 / 0.3 = 3.3333
+        let setpts = plan.filters.iter().find(|f| f.starts_with("setpts=")).unwrap();
+        assert!(setpts.contains("3.3333"));
+        assert_eq!(plan.audio_filter, Some("atempo=0.3".to_string()));
+    }
+
+    // -----------------------------------------------------------------------
+    // build_apply_plan — full-frame (no crop/scale)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_build_apply_plan_no_scale_or_crop() {
+        let profile: RenderProfile = serde_json::from_value(serde_json::json!({
+            "name": "test",
+            "width": 1080,
+            "height": 1920,
+            "crop_mode": "crop"
+        }))
+        .unwrap();
+        let config = AppConfig::default();
+        let plan = build_apply_plan(
+            Path::new("/input.mp4"),
+            Path::new("/output.mp4"),
+            &profile,
+            &config,
+        );
+        // Apply plan should have NO scale or crop filters
+        assert!(!plan.filters.iter().any(|f| f.starts_with("scale=") || f.starts_with("crop=")));
+    }
+
+    #[test]
+    fn test_build_apply_plan_speed_applies() {
+        let profile: RenderProfile = serde_json::from_value(serde_json::json!({
+            "name": "test",
+            "speed": 2.0
+        }))
+        .unwrap();
+        let config = AppConfig::default();
+        let plan = build_apply_plan(
+            Path::new("/input.mp4"),
+            Path::new("/output.mp4"),
+            &profile,
+            &config,
+        );
+        let setpts = plan.filters.iter().find(|f| f.starts_with("setpts=")).unwrap();
+        assert!(setpts.contains("0.5000"));
+        assert_eq!(plan.audio_filter, Some("atempo=2".to_string()));
+    }
+
+    #[test]
+    fn test_build_apply_plan_lut_applies() {
+        let profile: RenderProfile = serde_json::from_value(serde_json::json!({
+            "name": "test",
+            "lut": "/luts/warm.cube"
+        }))
+        .unwrap();
+        let config = AppConfig::default();
+        let plan = build_apply_plan(
+            Path::new("/input.mp4"),
+            Path::new("/output.mp4"),
+            &profile,
+            &config,
+        );
+        assert!(plan.filters.contains(&"lut3d=/luts/warm.cube".to_string()));
+    }
+
+    // -----------------------------------------------------------------------
+    // render_short — mock backend
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_render_short_basic() {
+        let backend = crate::test_utils::mock_backend();
+        let config = {
+            let mut c = AppConfig::default();
+            let profile: RenderProfile = serde_json::from_value(serde_json::json!({
+                "name": "tiktok",
+                "width": 1080,
+                "height": 1920
+            }))
+            .unwrap();
+            c.render_profiles.insert("tiktok".to_string(), profile);
+            c
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let output_dir = dir.path().join("renders");
+
+        let result = render_short(
+            &backend, &config, &input, &output_dir, "tiktok",
+            None, None, None, None,
+        );
+        assert!(result.is_ok());
+        let entry = result.unwrap();
+        assert!(entry.output.contains("tiktok"));
+        assert_eq!(entry.format, "tiktok");
+        assert!(Path::new(&entry.output).exists());
+    }
+
+    #[test]
+    fn test_render_short_apply_mode() {
+        let backend = crate::test_utils::mock_backend();
+        let config = {
+            let mut c = AppConfig::default();
+            let profile: RenderProfile = serde_json::from_value(serde_json::json!({
+                "name": "full",
+                "width": 1920,
+                "height": 1080
+            }))
+            .unwrap();
+            c.render_profiles.insert("full".to_string(), profile);
+            c
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let output_dir = dir.path().join("renders");
+
+        let result = render_short(
+            &backend, &config, &input, &output_dir, "full",
+            None, None, None, Some("apply"),
+        );
+        assert!(result.is_ok());
+        let entry = result.unwrap();
+        assert_eq!(entry.format, "full");
+    }
+
+    #[test]
+    fn test_render_short_with_overrides() {
+        let backend = crate::test_utils::mock_backend();
+        let config = {
+            let mut c = AppConfig::default();
+            let profile: RenderProfile = serde_json::from_value(serde_json::json!({
+                "name": "tiktok",
+                "width": 1080,
+                "height": 1920
+            }))
+            .unwrap();
+            c.render_profiles.insert("tiktok".to_string(), profile);
+            c
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let output_dir = dir.path().join("renders");
+
+        let overrides = RenderOverrides {
+            crop_mode: Some("crop".to_string()),
+            speed: Some(0.5),
+            ..Default::default()
+        };
+
+        let result = render_short(
+            &backend, &config, &input, &output_dir, "tiktok",
+            None, Some(&overrides), None, None,
+        );
+        assert!(result.is_ok());
+        let entry = result.unwrap();
+        // Overrides applied: crop_mode should be reflected in entry
+        assert_eq!(entry.crop_mode, "crop");
+    }
+
+    #[test]
+    fn test_render_short_missing_profile() {
+        let backend = crate::test_utils::mock_backend();
+        let config = AppConfig::default(); // no profiles
+
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let output_dir = dir.path().join("renders");
+
+        let result = render_short(
+            &backend, &config, &input, &output_dir, "nonexistent",
+            None, None, None, None,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn test_render_short_with_event_metadata() {
+        let backend = crate::test_utils::mock_backend();
+        let config = {
+            let mut c = AppConfig::default();
+            let profile: RenderProfile = serde_json::from_value(serde_json::json!({
+                "name": "tiktok",
+                "width": 1080,
+                "height": 1920
+            }))
+            .unwrap();
+            c.render_profiles.insert("tiktok".to_string(), profile);
+            c
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let output_dir = dir.path().join("renders");
+
+        let mut metadata = HashMap::new();
+        metadata.insert("scorer".to_string(), "Player One".to_string());
+        metadata.insert("team".to_string(), "Team A".to_string());
+
+        let result = render_short(
+            &backend, &config, &input, &output_dir, "tiktok",
+            Some(&metadata), None, None, None,
+        );
+        assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // render_iteration — mock backend
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_render_iteration_single_item() {
+        let backend = crate::test_utils::mock_backend();
+        let config = {
+            let mut c = AppConfig::default();
+            let profile: RenderProfile = serde_json::from_value(serde_json::json!({
+                "name": "tiktok",
+                "width": 1080,
+                "height": 1920
+            }))
+            .unwrap();
+            c.render_profiles.insert("tiktok".to_string(), profile);
+            c
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let output_dir = dir.path().join("renders");
+
+        let items = vec![IterationItem {
+            profile_name: "tiktok".to_string(),
+            overrides: None,
+        }];
+
+        let result = render_iteration(
+            &backend, &config, &input, &output_dir, &items,
+            false, None, None, None,
+        );
+        assert!(result.is_ok());
+        let entries = result.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].format, "tiktok");
+    }
+
+    #[test]
+    fn test_render_iteration_multiple_items() {
+        let backend = crate::test_utils::mock_backend();
+        let config = {
+            let mut c = AppConfig::default();
+            let p1: RenderProfile = serde_json::from_value(serde_json::json!({
+                "name": "tiktok", "width": 1080, "height": 1920
+            }))
+            .unwrap();
+            let p2: RenderProfile = serde_json::from_value(serde_json::json!({
+                "name": "youtube", "width": 1920, "height": 1080
+            }))
+            .unwrap();
+            c.render_profiles.insert("tiktok".to_string(), p1);
+            c.render_profiles.insert("youtube".to_string(), p2);
+            c
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let output_dir = dir.path().join("renders");
+
+        let items = vec![
+            IterationItem { profile_name: "tiktok".to_string(), overrides: None },
+            IterationItem { profile_name: "youtube".to_string(), overrides: None },
+        ];
+
+        let result = render_iteration(
+            &backend, &config, &input, &output_dir, &items,
+            false, None, None, None,
+        );
+        assert!(result.is_ok());
+        let entries = result.unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].format, "tiktok");
+        assert_eq!(entries[1].format, "youtube");
+    }
+
+    #[test]
+    fn test_render_iteration_empty_items_error() {
+        let backend = crate::test_utils::mock_backend();
+        let config = AppConfig::default();
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let output_dir = dir.path().join("renders");
+
+        let result = render_iteration(
+            &backend, &config, &input, &output_dir, &[],
+            false, None, None, None,
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "No iteration items provided");
+    }
+
+    #[test]
+    fn test_render_iteration_concat_output() {
+        let backend = crate::test_utils::mock_backend();
+        let config = {
+            let mut c = AppConfig::default();
+            let p1: RenderProfile = serde_json::from_value(serde_json::json!({
+                "name": "tiktok", "width": 1080, "height": 1920
+            }))
+            .unwrap();
+            let p2: RenderProfile = serde_json::from_value(serde_json::json!({
+                "name": "youtube", "width": 1920, "height": 1080
+            }))
+            .unwrap();
+            c.render_profiles.insert("tiktok".to_string(), p1);
+            c.render_profiles.insert("youtube".to_string(), p2);
+            c
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let output_dir = dir.path().join("renders");
+
+        let items = vec![
+            IterationItem { profile_name: "tiktok".to_string(), overrides: None },
+            IterationItem { profile_name: "youtube".to_string(), overrides: None },
+        ];
+
+        let result = render_iteration(
+            &backend, &config, &input, &output_dir, &items,
+            true, None, None, None,
+        );
+        assert!(result.is_ok());
+        let entries = result.unwrap();
+        // Concat produces a single entry
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].output.contains("iteration"));
+        assert_eq!(entries[0].format, "tiktok+youtube");
+    }
+
+    // -----------------------------------------------------------------------
+    // render_preview — mock backend
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_render_preview_default_fallback() {
+        let backend = crate::test_utils::mock_backend();
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let output_dir = dir.path().join("previews");
+
+        let result = render_preview(&backend, &input, &output_dir, None, None, None);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.exists());
+        assert!(output.to_str().unwrap().contains("preview"));
+    }
+
+    #[test]
+    fn test_render_preview_with_profile() {
+        let backend = crate::test_utils::mock_backend();
+        let config = {
+            let mut c = AppConfig::default();
+            let profile: RenderProfile = serde_json::from_value(serde_json::json!({
+                "name": "tiktok",
+                "width": 1080,
+                "height": 1920
+            }))
+            .unwrap();
+            c.render_profiles.insert("tiktok".to_string(), profile);
+            c
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let output_dir = dir.path().join("previews");
+
+        let result = render_preview(
+            &backend, &input, &output_dir, Some(&config), Some("tiktok"), None,
+        );
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.exists());
+        assert!(output.to_str().unwrap().contains("tiktok_preview"));
+    }
+
+    // -----------------------------------------------------------------------
+    // render_reel — mock backend
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_render_reel_two_files() {
+        let backend = crate::test_utils::mock_backend();
+        let config = AppConfig::default();
+        let dir = tempfile::tempdir().unwrap();
+
+        let short1 = dir.path().join("short1.mp4");
+        let short2 = dir.path().join("short2.mp4");
+        std::fs::write(&short1, "fake1").unwrap();
+        std::fs::write(&short2, "fake2").unwrap();
+        let output = dir.path().join("reel.mp4");
+
+        let result = render_reel(
+            &backend, &config, &[short1, short2], &output, None,
+        );
+        assert!(result.is_ok());
+        let rr = result.unwrap();
+        assert!(rr.output.exists());
+        assert!(rr.duration_secs > 0.0);
+    }
+
+    #[test]
+    fn test_render_reel_empty_shorts_error() {
+        let backend = crate::test_utils::mock_backend();
+        let config = AppConfig::default();
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("reel.mp4");
+
+        let result = render_reel(&backend, &config, &[], &output, None);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "No shorts to concatenate into a reel"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // list_render_profiles
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_list_render_profiles_with_profiles() {
+        let mut config = AppConfig::default();
+        let p1: RenderProfile = serde_json::from_value(serde_json::json!({
+            "width": 1080, "height": 1920
+        }))
+        .unwrap();
+        let p2: RenderProfile = serde_json::from_value(serde_json::json!({
+            "name": "youtube", "width": 1920, "height": 1080
+        }))
+        .unwrap();
+        config.render_profiles.insert("tiktok".to_string(), p1);
+        config.render_profiles.insert("youtube".to_string(), p2);
+
+        let profiles = list_render_profiles(&config);
+        assert_eq!(profiles.len(), 2);
+
+        // Profile without a name should get the key as name
+        let tiktok = profiles.iter().find(|p| p.name == "tiktok").unwrap();
+        assert_eq!(tiktok.width, Some(1080));
+
+        // Profile with an existing name should keep it
+        let youtube = profiles.iter().find(|p| p.name == "youtube").unwrap();
+        assert_eq!(youtube.width, Some(1920));
+    }
+
+    #[test]
+    fn test_list_render_profiles_empty_config() {
+        let config = AppConfig::default();
+        let profiles = list_render_profiles(&config);
+        assert!(profiles.is_empty());
+    }
 }

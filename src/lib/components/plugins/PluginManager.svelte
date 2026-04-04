@@ -18,6 +18,7 @@
     createProfile,
   } from "$lib/stores/plugins.svelte";
   import { getEnforceHooks, setEnforceHooks } from "$lib/ipc/plugins";
+  import { isPluginInstalled, isCliAvailable } from "$lib/stores/cli.svelte";
   import PluginCard from "./PluginCard.svelte";
 
   let profiles = $derived(getProfiles());
@@ -61,9 +62,15 @@
 
   interface UnifiedPlugin {
     name: string;
-    status: "enabled" | "disabled" | "available";
+    status: "enabled" | "enabled_not_installed" | "disabled" | "available";
     detail?: PluginDetail;
     registryInfo?: RegistryPlugin;
+  }
+
+  function resolveEnabledStatus(name: string): "enabled" | "enabled_not_installed" {
+    // When CLI is unavailable, degrade gracefully — show as enabled
+    if (!isCliAvailable()) return "enabled";
+    return isPluginInstalled(name) ? "enabled" : "enabled_not_installed";
   }
 
   let unifiedPlugins = $derived.by(() => {
@@ -71,25 +78,32 @@
     const seen = new Set<string>();
     const result: UnifiedPlugin[] = [];
 
+    const cliUp = isCliAvailable();
+
     for (const rp of registryPlugins) {
       seen.add(rp.name);
       const detail = configuredMap.get(rp.name);
+      if (!detail) continue; // "available" plugins belong on the Registry page
+      const installed = !cliUp || isPluginInstalled(rp.name);
+      // Hide disabled plugins that aren't installed — Registry page handles those
+      if (!detail.enabled && !installed) continue;
       result.push({
         name: rp.name,
-        status: detail ? (detail.enabled ? "enabled" : "disabled") : "available",
+        status: detail.enabled ? resolveEnabledStatus(rp.name) : "disabled",
         detail,
         registryInfo: rp,
       });
     }
 
     for (const p of configuredPlugins) {
-      if (!seen.has(p.name)) {
-        result.push({
-          name: p.name,
-          status: p.enabled ? "enabled" : "disabled",
-          detail: p,
-        });
-      }
+      if (seen.has(p.name)) continue;
+      const installed = !cliUp || isPluginInstalled(p.name);
+      if (!p.enabled && !installed) continue;
+      result.push({
+        name: p.name,
+        status: p.enabled ? resolveEnabledStatus(p.name) : "disabled",
+        detail: p,
+      });
     }
 
     return result;

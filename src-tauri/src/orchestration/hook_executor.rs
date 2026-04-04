@@ -95,14 +95,24 @@ pub fn execute_hook(
         ));
     }
 
-    serde_json::from_str::<HookExecutionResult>(trimmed).map_err(|e| {
+    let mut result = serde_json::from_str::<HookExecutionResult>(trimmed).map_err(|e| {
         format!(
             "Failed to parse CLI output: {}. Output: {}. Stderr: {}",
             e,
             &trimmed[..trimmed.len().min(500)],
             stderr.trim()
         )
-    })
+    })?;
+
+    // Capture stderr warnings (e.g., config validation) into logs
+    for line in stderr.lines() {
+        let trimmed_line = line.trim();
+        if !trimmed_line.is_empty() {
+            result.logs.push(trimmed_line.to_string());
+        }
+    }
+
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -373,6 +383,61 @@ mod tests {
         .unwrap();
 
         assert!(result.success);
+    }
+
+    #[test]
+    fn test_execute_hook_stderr_captured_as_logs() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("stderr_reeln.sh");
+        let json_out = r#"{"success":true,"hook":"on_game_init","shared":{},"logs":["from_stdout"],"errors":[]}"#;
+        {
+            let mut f = std::fs::File::create(&script).unwrap();
+            writeln!(f, "#!/bin/sh").unwrap();
+            writeln!(f, "echo '{}'", json_out).unwrap();
+            writeln!(f, "echo 'warning: config deprecated' >&2").unwrap();
+            writeln!(f, "echo 'notice: upgrade available' >&2").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+
+        let result = execute_hook(
+            script.to_str().unwrap(),
+            "on_game_init",
+            &serde_json::json!({}),
+            &serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+
+        assert!(result.success);
+        // Original stdout log preserved
+        assert!(result.logs.contains(&"from_stdout".to_string()));
+        // stderr lines appended to logs
+        assert!(result.logs.contains(&"warning: config deprecated".to_string()));
+        assert!(result.logs.contains(&"notice: upgrade available".to_string()));
+        assert_eq!(result.logs.len(), 3);
+    }
+
+    #[test]
+    fn test_execute_hook_empty_stderr_not_added() {
+        let dir = tempfile::tempdir().unwrap();
+        let json_out = r#"{"success":true,"hook":"on_game_init","shared":{},"logs":[],"errors":[]}"#;
+        let script = make_script(dir.path(), json_out);
+
+        let result = execute_hook(
+            script.to_str().unwrap(),
+            "on_game_init",
+            &serde_json::json!({}),
+            &serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+
+        // No stderr → no extra log entries
+        assert!(result.logs.is_empty());
     }
 
     #[test]

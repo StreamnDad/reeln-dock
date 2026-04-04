@@ -104,7 +104,11 @@ pub async fn render_short(
     scorer: Option<String>,
     assist1: Option<String>,
     assist2: Option<String>,
+    debug: Option<bool>,
+    config_path: Option<String>,
 ) -> Result<serde_json::Value, String> {
+    let debug_flag = debug.unwrap_or(false);
+
     // Try CLI first (full features), fall back to native backend
     let cli_path = {
         let settings = state.dock_settings.lock().map_err(|e| e.to_string())?;
@@ -112,8 +116,11 @@ pub async fn render_short(
     };
 
     if let (Some(cli), Some(gdir)) = (&cli_path, &game_dir) {
-        let config_path = state.dock_settings.lock().map_err(|e| e.to_string())?
-            .reeln_config_path.clone();
+        // Use explicit config path (plugin profile) if provided, otherwise fall back to DockSettings
+        let config_path = config_path.or_else(|| {
+            state.dock_settings.lock().ok()
+                .and_then(|s| s.reeln_config_path.clone())
+        });
 
         // Build event_type from game state for scoring team resolution
         let event_type = event_id.as_deref().and_then(|eid| {
@@ -160,6 +167,7 @@ pub async fn render_short(
                 assist2: a2.as_deref(),
                 iterate: false,
                 event_type: et.as_deref(),
+                debug: debug_flag,
             };
             render_ops::render_via_cli(&params)
         })
@@ -260,7 +268,11 @@ pub async fn render_iteration(
     scorer: Option<String>,
     assist1: Option<String>,
     assist2: Option<String>,
+    debug: Option<bool>,
+    config_path: Option<String>,
 ) -> Result<serde_json::Value, String> {
+    let debug_flag = debug.unwrap_or(false);
+
     // Try CLI first — with --iterate, CLI handles multi-profile + concatenation
     let cli_path = {
         let settings = state.dock_settings.lock().map_err(|e| e.to_string())?;
@@ -268,8 +280,11 @@ pub async fn render_iteration(
     };
 
     if let (Some(cli), Some(gdir)) = (&cli_path, &game_dir) {
-        let config_path = state.dock_settings.lock().map_err(|e| e.to_string())?
-            .reeln_config_path.clone();
+        // Use explicit config path (plugin profile) if provided, otherwise fall back to DockSettings
+        let config_path = config_path.or_else(|| {
+            state.dock_settings.lock().ok()
+                .and_then(|s| s.reeln_config_path.clone())
+        });
 
         let event_type = event_id.as_deref().and_then(|eid| {
             let game_path = Path::new(gdir.as_str());
@@ -319,6 +334,7 @@ pub async fn render_iteration(
                 assist2: a2.as_deref(),
                 iterate: true,
                 event_type: et.as_deref(),
+                debug: debug_flag,
             };
             render_ops::render_via_cli(&params)
         })
@@ -522,4 +538,310 @@ pub fn list_render_profiles(
         .iter()
         .map(|p| serde_json::to_value(p).map_err(|e| e.to_string()))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    // ── build_event_metadata ─────────────────────────────────────────
+
+    #[test]
+    fn build_event_metadata_basic_game_info() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        crate::test_utils::create_test_game(&game_dir);
+
+        let meta =
+            build_event_metadata(game_dir.to_str().unwrap(), None, None, None, None).unwrap();
+
+        assert_eq!(meta.get("home_team").unwrap(), "Team A");
+        assert_eq!(meta.get("away_team").unwrap(), "Team B");
+        assert_eq!(meta.get("date").unwrap(), "2026-04-03");
+        assert_eq!(meta.get("sport").unwrap(), "soccer");
+        assert_eq!(meta.get("tournament").unwrap(), "Test League");
+        // level is empty string — should still be in map (it's always inserted)
+        assert!(meta.contains_key("level"));
+        // venue is empty — should NOT be in map
+        assert!(!meta.contains_key("venue"));
+    }
+
+    #[test]
+    fn build_event_metadata_with_venue() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game_venue");
+        let mut state = crate::test_utils::create_test_game(&game_dir);
+        state.game_info.venue = "Stadium".to_string();
+        reeln_state::save_game_state(&state, &game_dir).unwrap();
+
+        let meta =
+            build_event_metadata(game_dir.to_str().unwrap(), None, None, None, None).unwrap();
+
+        assert_eq!(meta.get("venue").unwrap(), "Stadium");
+    }
+
+    #[test]
+    fn build_event_metadata_with_matching_event() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game_event");
+        let mut state = crate::test_utils::create_test_game(&game_dir);
+        state.events.push(reeln_state::GameEvent {
+            id: "evt1".to_string(),
+            clip: "clip.mp4".to_string(),
+            segment_number: 2,
+            event_type: "goal".to_string(),
+            player: String::new(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            metadata: HashMap::new(),
+        });
+        reeln_state::save_game_state(&state, &game_dir).unwrap();
+
+        let meta = build_event_metadata(
+            game_dir.to_str().unwrap(),
+            Some("evt1"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(meta.get("event_type").unwrap(), "goal");
+        assert_eq!(meta.get("segment_number").unwrap(), "2");
+    }
+
+    #[test]
+    fn build_event_metadata_event_metadata_string_values() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game_evt_meta");
+        let mut state = crate::test_utils::create_test_game(&game_dir);
+        let mut evt_meta = HashMap::new();
+        evt_meta.insert(
+            "team".to_string(),
+            serde_json::Value::String("home".to_string()),
+        );
+        // Non-string values should be skipped
+        evt_meta.insert("score".to_string(), serde_json::Value::Number(3.into()));
+        state.events.push(reeln_state::GameEvent {
+            id: "evt2".to_string(),
+            clip: "clip2.mp4".to_string(),
+            segment_number: 1,
+            event_type: "assist".to_string(),
+            player: String::new(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            metadata: evt_meta,
+        });
+        reeln_state::save_game_state(&state, &game_dir).unwrap();
+
+        let meta = build_event_metadata(
+            game_dir.to_str().unwrap(),
+            Some("evt2"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(meta.get("team").unwrap(), "home");
+        // Non-string metadata value should not be present
+        assert!(!meta.contains_key("score"));
+    }
+
+    #[test]
+    fn build_event_metadata_scorer_assist_override() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game_players");
+        crate::test_utils::create_test_game(&game_dir);
+
+        let meta = build_event_metadata(
+            game_dir.to_str().unwrap(),
+            None,
+            Some("PlayerA"),
+            Some("PlayerB"),
+            Some("PlayerC"),
+        )
+        .unwrap();
+
+        assert_eq!(meta.get("player").unwrap(), "PlayerA");
+        assert_eq!(meta.get("assist1").unwrap(), "PlayerB");
+        assert_eq!(meta.get("assist2").unwrap(), "PlayerC");
+    }
+
+    #[test]
+    fn build_event_metadata_empty_scorer_assist_not_included() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game_empty_players");
+        crate::test_utils::create_test_game(&game_dir);
+
+        let meta = build_event_metadata(
+            game_dir.to_str().unwrap(),
+            None,
+            Some(""),
+            Some(""),
+            Some(""),
+        )
+        .unwrap();
+
+        assert!(!meta.contains_key("player"));
+        assert!(!meta.contains_key("assist1"));
+        assert!(!meta.contains_key("assist2"));
+    }
+
+    #[test]
+    fn build_event_metadata_event_not_found_still_returns_basic() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game_no_evt");
+        crate::test_utils::create_test_game(&game_dir);
+
+        let meta = build_event_metadata(
+            game_dir.to_str().unwrap(),
+            Some("nonexistent"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        // Basic info is present even though event was not found
+        assert_eq!(meta.get("home_team").unwrap(), "Team A");
+        assert!(!meta.contains_key("event_type"));
+        assert!(!meta.contains_key("segment_number"));
+    }
+
+    #[test]
+    fn build_event_metadata_invalid_game_dir_returns_none() {
+        let result = build_event_metadata("/nonexistent/path", None, None, None, None);
+        assert!(result.is_none());
+    }
+
+    // ── delete_preview ───────────────────────────────────────────────
+
+    #[test]
+    fn delete_preview_existing_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file_path = tmp.path().join("preview.mp4");
+        std::fs::write(&file_path, b"preview data").unwrap();
+        assert!(file_path.exists());
+
+        let result = delete_preview(file_path.to_str().unwrap().to_string());
+        assert!(result.is_ok());
+        assert!(!file_path.exists());
+    }
+
+    #[test]
+    fn delete_preview_nonexistent_file_ok() {
+        let result = delete_preview("/nonexistent/preview.mp4".to_string());
+        assert!(result.is_ok());
+    }
+
+    // ── RenderOverrides serde ────────────────────────────────────────
+
+    #[test]
+    fn render_overrides_default_all_none() {
+        let ovr = RenderOverrides::default();
+        assert!(ovr.crop_mode.is_none());
+        assert!(ovr.scale.is_none());
+        assert!(ovr.speed.is_none());
+        assert!(ovr.smart.is_none());
+        assert!(ovr.anchor_x.is_none());
+        assert!(ovr.anchor_y.is_none());
+        assert!(ovr.pad_color.is_none());
+        assert!(ovr.zoom_frames.is_none());
+        assert!(ovr.extra.is_empty());
+    }
+
+    #[test]
+    fn render_overrides_deserialize_all_fields() {
+        let json = serde_json::json!({
+            "crop_mode": "center",
+            "scale": 0.5,
+            "speed": 1.5,
+            "smart": true,
+            "anchor_x": 0.3,
+            "anchor_y": 0.7,
+            "pad_color": "#000000",
+            "zoom_frames": 10,
+            "custom_field": "custom_value"
+        });
+
+        let ovr: RenderOverrides = serde_json::from_value(json).unwrap();
+        assert_eq!(ovr.crop_mode.as_deref(), Some("center"));
+        assert_eq!(ovr.scale, Some(0.5));
+        assert_eq!(ovr.speed, Some(1.5));
+        assert_eq!(ovr.smart, Some(true));
+        assert_eq!(ovr.anchor_x, Some(0.3));
+        assert_eq!(ovr.anchor_y, Some(0.7));
+        assert_eq!(ovr.pad_color.as_deref(), Some("#000000"));
+        assert_eq!(ovr.zoom_frames, Some(10));
+        assert_eq!(
+            ovr.extra.get("custom_field").unwrap(),
+            &serde_json::Value::String("custom_value".to_string())
+        );
+    }
+
+    #[test]
+    fn render_overrides_roundtrip() {
+        let ovr = RenderOverrides {
+            crop_mode: Some("letterbox".to_string()),
+            scale: Some(1.0),
+            speed: Some(2.0),
+            smart: Some(false),
+            anchor_x: Some(0.5),
+            anchor_y: Some(0.5),
+            pad_color: Some("#ffffff".to_string()),
+            zoom_frames: Some(5),
+            extra: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "plugin_key".to_string(),
+                    serde_json::Value::Bool(true),
+                );
+                m
+            },
+        };
+
+        let serialized = serde_json::to_string(&ovr).unwrap();
+        let deserialized: RenderOverrides = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(deserialized.crop_mode, ovr.crop_mode);
+        assert_eq!(deserialized.scale, ovr.scale);
+        assert_eq!(deserialized.speed, ovr.speed);
+        assert_eq!(deserialized.smart, ovr.smart);
+        assert_eq!(deserialized.anchor_x, ovr.anchor_x);
+        assert_eq!(deserialized.anchor_y, ovr.anchor_y);
+        assert_eq!(deserialized.pad_color, ovr.pad_color);
+        assert_eq!(deserialized.zoom_frames, ovr.zoom_frames);
+        assert_eq!(deserialized.extra, ovr.extra);
+    }
+
+    // ── IterationItem serde ──────────────────────────────────────────
+
+    #[test]
+    fn iteration_item_with_overrides() {
+        let json = serde_json::json!({
+            "profile_name": "default",
+            "overrides": {
+                "speed": 1.5,
+                "smart": true
+            }
+        });
+
+        let item: IterationItem = serde_json::from_value(json).unwrap();
+        assert_eq!(item.profile_name, "default");
+        let ovr = item.overrides.unwrap();
+        assert_eq!(ovr.speed, Some(1.5));
+        assert_eq!(ovr.smart, Some(true));
+    }
+
+    #[test]
+    fn iteration_item_without_overrides() {
+        let json = serde_json::json!({
+            "profile_name": "fast",
+            "overrides": null
+        });
+
+        let item: IterationItem = serde_json::from_value(json).unwrap();
+        assert_eq!(item.profile_name, "fast");
+        assert!(item.overrides.is_none());
+    }
 }

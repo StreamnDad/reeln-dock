@@ -74,6 +74,17 @@ export async function getVersionInfo(): Promise<VersionInfo> {
   return invoke<VersionInfo>("get_version_info");
 }
 
+export interface PluginInstallResult {
+  success: boolean;
+  output: string;
+}
+
+export async function installPluginViaCli(
+  pluginName: string,
+): Promise<PluginInstallResult> {
+  return invoke<PluginInstallResult>("install_plugin_via_cli", { pluginName });
+}
+
 export async function getEnforceHooks(
   profilePath: string,
 ): Promise<boolean> {

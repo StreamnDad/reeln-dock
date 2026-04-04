@@ -320,3 +320,418 @@ pub fn quick_tag_event(
     reeln_state::save_game_state(&state, path).map_err(|e| e.to_string())?;
     Ok(state)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// Helper: create a test game and add events to it.
+    fn setup_game_with_events(game_dir: &Path, events: Vec<reeln_state::GameEvent>) {
+        let mut state = crate::test_utils::create_test_game(game_dir);
+        state.events = events;
+        reeln_state::save_game_state(&state, game_dir).unwrap();
+    }
+
+    fn make_event(id: &str, clip: &str, event_type: &str) -> reeln_state::GameEvent {
+        reeln_state::GameEvent {
+            id: id.to_string(),
+            clip: clip.to_string(),
+            segment_number: 1,
+            event_type: event_type.to_string(),
+            player: String::new(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            metadata: HashMap::new(),
+        }
+    }
+
+    // ── update_game_event ──────────────────────────────────────────────
+
+    #[test]
+    fn update_game_event_sets_clip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        setup_game_with_events(&game_dir, vec![make_event("evt1", "old.mp4", "goal")]);
+
+        let result = update_game_event(
+            game_dir.display().to_string(),
+            "evt1".into(),
+            "clip".into(),
+            "new.mp4".into(),
+        )
+        .unwrap();
+
+        assert_eq!(result.events[0].clip, "new.mp4");
+
+        // Verify persisted
+        let reloaded = reeln_state::load_game_state(&game_dir).unwrap();
+        assert_eq!(reloaded.events[0].clip, "new.mp4");
+    }
+
+    #[test]
+    fn update_game_event_sets_event_type() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        setup_game_with_events(&game_dir, vec![make_event("evt1", "clip.mp4", "goal")]);
+
+        let result = update_game_event(
+            game_dir.display().to_string(),
+            "evt1".into(),
+            "event_type".into(),
+            "assist".into(),
+        )
+        .unwrap();
+
+        assert_eq!(result.events[0].event_type, "assist");
+    }
+
+    #[test]
+    fn update_game_event_sets_player() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        setup_game_with_events(&game_dir, vec![make_event("evt1", "clip.mp4", "goal")]);
+
+        let result = update_game_event(
+            game_dir.display().to_string(),
+            "evt1".into(),
+            "player".into(),
+            "Player 7".into(),
+        )
+        .unwrap();
+
+        assert_eq!(result.events[0].player, "Player 7");
+    }
+
+    #[test]
+    fn update_game_event_sets_metadata_field() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        setup_game_with_events(&game_dir, vec![make_event("evt1", "clip.mp4", "goal")]);
+
+        let result = update_game_event(
+            game_dir.display().to_string(),
+            "evt1".into(),
+            "scorer".into(),
+            "Player 9".into(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            result.events[0].metadata.get("scorer"),
+            Some(&serde_json::Value::String("Player 9".to_string()))
+        );
+    }
+
+    #[test]
+    fn update_game_event_removes_metadata_when_value_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        let mut evt = make_event("evt1", "clip.mp4", "goal");
+        evt.metadata.insert(
+            "scorer".to_string(),
+            serde_json::Value::String("Player 9".to_string()),
+        );
+        setup_game_with_events(&game_dir, vec![evt]);
+
+        let result = update_game_event(
+            game_dir.display().to_string(),
+            "evt1".into(),
+            "scorer".into(),
+            "".into(),
+        )
+        .unwrap();
+
+        assert!(!result.events[0].metadata.contains_key("scorer"));
+    }
+
+    #[test]
+    fn update_game_event_returns_error_for_missing_event() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        setup_game_with_events(&game_dir, vec![make_event("evt1", "clip.mp4", "goal")]);
+
+        let err = update_game_event(
+            game_dir.display().to_string(),
+            "nonexistent".into(),
+            "clip".into(),
+            "x.mp4".into(),
+        )
+        .unwrap_err();
+
+        assert!(err.contains("nonexistent"));
+        assert!(err.contains("not found"));
+    }
+
+    // ── list_games ─────────────────────────────────────────────────────
+
+    #[test]
+    fn list_games_returns_empty_for_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = list_games(tmp.path().display().to_string()).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn list_games_finds_game_with_game_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        crate::test_utils::create_test_game(&game_dir);
+
+        let result = list_games(tmp.path().display().to_string()).unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(result[0].dir_path.contains("game1"));
+        assert_eq!(result[0].state.game_info.home_team, "Team A");
+    }
+
+    #[test]
+    fn list_games_skips_dir_without_game_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let subdir = tmp.path().join("not_a_game");
+        std::fs::create_dir_all(&subdir).unwrap();
+
+        let result = list_games(tmp.path().display().to_string()).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn list_games_returns_empty_for_nonexistent_dir() {
+        let result = list_games("/tmp/nonexistent_reeln_test_dir_xyz".into()).unwrap();
+        assert!(result.is_empty());
+    }
+
+    // ── get_game_state ─────────────────────────────────────────────────
+
+    #[test]
+    fn get_game_state_loads_valid_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        let original = crate::test_utils::create_test_game(&game_dir);
+
+        let loaded = get_game_state(game_dir.display().to_string()).unwrap();
+        assert_eq!(loaded.game_info.home_team, original.game_info.home_team);
+        assert_eq!(loaded.game_info.sport, "soccer");
+    }
+
+    #[test]
+    fn get_game_state_errors_for_missing_dir() {
+        let err = get_game_state("/tmp/nonexistent_reeln_game_xyz".into()).unwrap_err();
+        assert!(!err.is_empty());
+    }
+
+    // ── set_game_tournament ────────────────────────────────────────────
+
+    #[test]
+    fn set_game_tournament_updates_and_persists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        crate::test_utils::create_test_game(&game_dir);
+
+        let result =
+            set_game_tournament(game_dir.display().to_string(), "Cup 2026".into()).unwrap();
+        assert_eq!(result.game_info.tournament, "Cup 2026");
+
+        let reloaded = reeln_state::load_game_state(&game_dir).unwrap();
+        assert_eq!(reloaded.game_info.tournament, "Cup 2026");
+    }
+
+    // ── bulk_update_event_type ─────────────────────────────────────────
+
+    #[test]
+    fn bulk_update_event_type_updates_matching_events() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        setup_game_with_events(
+            &game_dir,
+            vec![
+                make_event("evt1", "a.mp4", "goal"),
+                make_event("evt2", "b.mp4", "goal"),
+                make_event("evt3", "c.mp4", "save"),
+            ],
+        );
+
+        let result = bulk_update_event_type(
+            game_dir.display().to_string(),
+            vec!["evt1".into(), "evt2".into()],
+            "penalty".into(),
+        )
+        .unwrap();
+
+        assert_eq!(result.events[0].event_type, "penalty");
+        assert_eq!(result.events[1].event_type, "penalty");
+        assert_eq!(result.events[2].event_type, "save"); // unchanged
+    }
+
+    #[test]
+    fn bulk_update_event_type_ignores_nonexistent_ids() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        setup_game_with_events(&game_dir, vec![make_event("evt1", "a.mp4", "goal")]);
+
+        let result = bulk_update_event_type(
+            game_dir.display().to_string(),
+            vec!["evt1".into(), "nonexistent".into()],
+            "assist".into(),
+        )
+        .unwrap();
+
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.events[0].event_type, "assist");
+    }
+
+    // ── quick_tag_event ────────────────────────────────────────────────
+
+    #[test]
+    fn quick_tag_event_sets_type_and_team() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        setup_game_with_events(&game_dir, vec![make_event("evt1", "a.mp4", "")]);
+
+        let result = quick_tag_event(
+            game_dir.display().to_string(),
+            "evt1".into(),
+            "goal".into(),
+            Some("home".into()),
+        )
+        .unwrap();
+
+        assert_eq!(result.events[0].event_type, "goal");
+        assert_eq!(
+            result.events[0].metadata.get("team"),
+            Some(&serde_json::Value::String("home".to_string()))
+        );
+    }
+
+    #[test]
+    fn quick_tag_event_without_team_removes_team_metadata() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        let mut evt = make_event("evt1", "a.mp4", "goal");
+        evt.metadata.insert(
+            "team".to_string(),
+            serde_json::Value::String("home".to_string()),
+        );
+        setup_game_with_events(&game_dir, vec![evt]);
+
+        let result = quick_tag_event(
+            game_dir.display().to_string(),
+            "evt1".into(),
+            "save".into(),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result.events[0].event_type, "save");
+        assert!(!result.events[0].metadata.contains_key("team"));
+    }
+
+    #[test]
+    fn quick_tag_event_returns_error_for_missing_event() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        setup_game_with_events(&game_dir, vec![make_event("evt1", "a.mp4", "goal")]);
+
+        let err = quick_tag_event(
+            game_dir.display().to_string(),
+            "missing".into(),
+            "goal".into(),
+            None,
+        )
+        .unwrap_err();
+
+        assert!(err.contains("missing"));
+        assert!(err.contains("not found"));
+    }
+
+    // ── prune_renders ──────────────────────────────────────────────────
+
+    #[test]
+    fn prune_renders_removes_files_and_clears_entries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        let mut state = crate::test_utils::create_test_game(&game_dir);
+
+        // Create actual render files on disk
+        let render_file = game_dir.join("render1.mp4");
+        std::fs::write(&render_file, b"fake render content 12345").unwrap();
+
+        state.renders.push(reeln_state::RenderEntry {
+            input: "clip.mp4".to_string(),
+            output: render_file.display().to_string(),
+            segment_number: 0,
+            format: "tiktok".to_string(),
+            crop_mode: "".to_string(),
+            rendered_at: chrono::Utc::now().to_rfc3339(),
+            event_id: "".to_string(),
+        });
+        reeln_state::save_game_state(&state, &game_dir).unwrap();
+
+        let result = prune_renders(game_dir.display().to_string()).unwrap();
+
+        // File should be deleted
+        assert!(!render_file.exists());
+
+        // JSON response should report stats
+        assert_eq!(result["removed_files"], 1);
+        assert_eq!(result["cleared_entries"], 1);
+        assert_eq!(result["bytes_freed"], 25); // b"fake render content 12345".len()
+
+        // Game state should have empty renders
+        let reloaded = reeln_state::load_game_state(&game_dir).unwrap();
+        assert!(reloaded.renders.is_empty());
+    }
+
+    #[test]
+    fn prune_renders_with_no_renders() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        crate::test_utils::create_test_game(&game_dir);
+
+        let result = prune_renders(game_dir.display().to_string()).unwrap();
+        assert_eq!(result["removed_files"], 0);
+        assert_eq!(result["cleared_entries"], 0);
+        assert_eq!(result["bytes_freed"], 0);
+    }
+
+    #[test]
+    fn prune_renders_handles_missing_render_file_gracefully() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        let mut state = crate::test_utils::create_test_game(&game_dir);
+
+        // Add render entry pointing to a file that doesn't exist
+        state.renders.push(reeln_state::RenderEntry {
+            input: "clip.mp4".to_string(),
+            output: game_dir.join("ghost.mp4").display().to_string(),
+            segment_number: 0,
+            format: "tiktok".to_string(),
+            crop_mode: "".to_string(),
+            rendered_at: chrono::Utc::now().to_rfc3339(),
+            event_id: "".to_string(),
+        });
+        reeln_state::save_game_state(&state, &game_dir).unwrap();
+
+        let result = prune_renders(game_dir.display().to_string()).unwrap();
+        // Entry cleared even though file was already gone
+        assert_eq!(result["cleared_entries"], 1);
+        assert_eq!(result["removed_files"], 0);
+    }
+
+    // ── finish_game (command wrapper) ──────────────────────────────────
+
+    #[test]
+    fn finish_game_sets_finished_and_timestamp() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        crate::test_utils::create_test_game(&game_dir);
+
+        let result = finish_game(game_dir.display().to_string()).unwrap();
+
+        assert_eq!(result["finished"], true);
+        assert!(!result["finished_at"].as_str().unwrap().is_empty());
+
+        // Verify persisted
+        let reloaded = reeln_state::load_game_state(&game_dir).unwrap();
+        assert!(reloaded.finished);
+        assert!(!reloaded.finished_at.is_empty());
+    }
+}

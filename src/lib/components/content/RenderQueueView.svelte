@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { openFile } from "$lib/ipc/media";
   import {
     getQueue,
     removeFromQueue,
@@ -103,6 +104,11 @@
     return !!(o.crop_mode || (o.scale != null && o.scale !== 1) || (o.speed != null && o.speed !== 1) || o.smart || o.pad_color || o.zoom_frames);
   }
 
+  function openDebugIndex(gameDir: string) {
+    const debugPath = `${gameDir}/debug/index.html`;
+    openFile(debugPath).catch(() => {});
+  }
+
   function handleDragStart(index: number) { dragIndex = index; }
   function handleDragOver(index: number) {
     if (dragIndex === null || dragIndex === index) return;
@@ -180,6 +186,9 @@
                     {/if}
                   </div>
                   <div class="flex items-center gap-2 mt-0.5">
+                    {#if item.pluginProfile}
+                      <span class="px-1.5 py-0.5 bg-primary/30 rounded text-[10px] font-medium text-text">{item.pluginProfile}</span>
+                    {/if}
                     {#each item.profiles as profile}
                       <span class="px-1.5 py-0.5 bg-bg rounded text-[10px] text-text-muted">{profile.profile_name}</span>
                     {/each}
@@ -215,6 +224,13 @@
                       onclick={() => activeRender = item.results![0]}
                     >View</button>
                   {/if}
+                  {#if item.status === "done" && item.debug}
+                    <button
+                      class="px-2 py-1 text-xs text-yellow-400 hover:text-text bg-bg rounded transition-colors"
+                      onclick={() => openDebugIndex(item.gameDir)}
+                      title="Open debug index.html"
+                    >Debug</button>
+                  {/if}
                   <button
                     class="px-1.5 py-1 text-text-muted hover:text-accent text-xs transition-colors"
                     onclick={() => removeFromQueue(item.id)}
@@ -226,7 +242,14 @@
               <!-- Expandable details -->
               {#if isExpanded}
                 <div class="px-3 pb-3 pt-0 border-t border-border">
-                  <div class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs pt-2.5">
+                  {#if item.pluginProfile}
+                    <div class="pt-2.5 pb-1.5 mb-1.5 border-b border-border/50">
+                      <span class="text-xs text-text-muted">Plugin Profile</span>
+                      <span class="ml-2 text-sm font-medium">{item.pluginProfile}</span>
+                    </div>
+                  {/if}
+
+                  <div class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs {item.pluginProfile ? 'pt-0' : 'pt-2.5'}">
                     <span class="text-text-muted">Mode</span>
                     <span>{item.mode === "apply" ? "Apply (full-frame)" : "Short (crop/scale)"}</span>
 
@@ -273,11 +296,6 @@
                     {#if item.assist2}
                       <span class="text-text-muted">Assist 2</span>
                       <span>{item.assist2}</span>
-                    {/if}
-
-                    {#if item.pluginProfile}
-                      <span class="text-text-muted">Plugin Profile</span>
-                      <span>{item.pluginProfile}</span>
                     {/if}
 
                     <span class="text-text-muted">Clip</span>

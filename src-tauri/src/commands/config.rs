@@ -187,6 +187,79 @@ pub struct LoadedConfig {
 
 // ── Render queue persistence ────────────────────────────────────────
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── get_config_path ────────────────────────────────────────────
+
+    #[test]
+    fn get_config_path_none_profile() {
+        let path = get_config_path(None);
+        // Should return a path ending with "config.json" (the default, no profile infix)
+        assert!(path.ends_with("config.json"), "got: {path}");
+        // The filename must be exactly "config.json", not "config.<profile>.json"
+        let filename = std::path::Path::new(&path)
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(filename, "config.json");
+    }
+
+    #[test]
+    fn get_config_path_with_profile() {
+        let path = get_config_path(Some("production".to_string()));
+        assert!(
+            path.ends_with("config.production.json"),
+            "expected path ending with config.production.json, got: {path}"
+        );
+    }
+
+    // ── load_reeln_config ──────────────────────────────────────────
+
+    #[test]
+    fn load_reeln_config_missing_file_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nonexistent.json");
+        let result = load_reeln_config(&path.display().to_string());
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("not found"),
+            "error should mention 'not found', got: {err}"
+        );
+    }
+
+    #[test]
+    fn load_reeln_config_valid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        crate::test_utils::create_test_config(&path);
+
+        let config = load_reeln_config(&path.display().to_string()).unwrap();
+        assert_eq!(config.config_version, 1);
+    }
+
+    // ── EventTypeInput serde ───────────────────────────────────────
+
+    #[test]
+    fn event_type_input_with_team_specific_true() {
+        let json = serde_json::json!({"name": "Goal", "team_specific": true});
+        let input: EventTypeInput = serde_json::from_value(json).unwrap();
+        assert_eq!(input.name, "Goal");
+        assert!(input.team_specific);
+    }
+
+    #[test]
+    fn event_type_input_default_team_specific_is_false() {
+        let json = serde_json::json!({"name": "Penalty"});
+        let input: EventTypeInput = serde_json::from_value(json).unwrap();
+        assert_eq!(input.name, "Penalty");
+        assert!(!input.team_specific);
+    }
+}
+
 /// Save render queue to disk (app data dir).
 #[tauri::command]
 pub fn save_render_queue(

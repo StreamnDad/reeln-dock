@@ -45,11 +45,12 @@
   onclick={handleBackdropClick}
 >
   <div
-    class="bg-bg border border-border shadow-2xl overflow-hidden transition-all duration-200"
+    class="bg-bg border border-border shadow-2xl overflow-hidden transition-all duration-200 flex flex-col"
     class:rounded-xl={!expanded}
     class:max-w-2xl={!expanded}
     class:w-full={!expanded}
     class:mx-4={!expanded}
+    class:max-h-[90vh]={!expanded}
     class:inset-4={expanded}
     class:fixed={expanded}
     class:rounded-lg={expanded}
@@ -72,7 +73,7 @@
     </div>
 
     <!-- Video -->
-    <div class="bg-black" class:flex-1={expanded} class:min-h-0={expanded} style={expanded ? "display: flex; flex-direction: column;" : ""}>
+    <div class="bg-black flex-1 min-h-0 overflow-hidden" style={expanded ? "display: flex; flex-direction: column;" : ""}>
       {#if videoError}
         <div class="aspect-video flex items-center justify-center">
           <div class="text-center p-4">
@@ -84,7 +85,7 @@
         <VideoPlayer
           src={videoSrc}
           autoplay={true}
-          class={expanded ? "max-h-[calc(100vh-12rem)]" : ""}
+          class={expanded ? "max-h-[calc(100vh-12rem)]" : "max-h-[60vh]"}
           onerror={() => { videoError = true; }}
         />
       {/if}

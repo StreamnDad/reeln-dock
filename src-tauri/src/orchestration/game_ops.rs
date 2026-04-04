@@ -268,3 +268,54 @@ pub fn finish_game(game_dir: &Path) -> Result<GameState, String> {
     reeln_state::save_game_state(&state, game_dir).map_err(|e| e.to_string())?;
     Ok(state)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finish_game_sets_finished_and_populated_timestamp() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        let original = crate::test_utils::create_test_game(&game_dir);
+        assert!(!original.finished);
+        assert!(original.finished_at.is_empty());
+
+        let result = finish_game(&game_dir).unwrap();
+
+        assert!(result.finished);
+        assert!(!result.finished_at.is_empty());
+        // Timestamp should be a valid RFC 3339 datetime
+        chrono::DateTime::parse_from_rfc3339(&result.finished_at)
+            .expect("finished_at should be valid RFC 3339");
+
+        // Verify persisted to disk
+        let reloaded = reeln_state::load_game_state(&game_dir).unwrap();
+        assert!(reloaded.finished);
+        assert_eq!(reloaded.finished_at, result.finished_at);
+    }
+
+    #[test]
+    fn finish_game_preserves_existing_state_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        let mut state = crate::test_utils::create_test_game(&game_dir);
+        state.segments_processed = vec![1, 2];
+        state.highlighted = true;
+        state.game_info.home_team = "Eagles".to_string();
+        reeln_state::save_game_state(&state, &game_dir).unwrap();
+
+        let result = finish_game(&game_dir).unwrap();
+
+        assert!(result.finished);
+        assert_eq!(result.segments_processed, vec![1, 2]);
+        assert!(result.highlighted);
+        assert_eq!(result.game_info.home_team, "Eagles");
+    }
+
+    #[test]
+    fn finish_game_errors_for_nonexistent_dir() {
+        let err = finish_game(Path::new("/tmp/nonexistent_reeln_game_ops_xyz")).unwrap_err();
+        assert!(!err.is_empty());
+    }
+}

@@ -31,6 +31,18 @@ reeln-dock (THIS REPO)   ← desktop GUI, uses reeln-core directly as Rust depen
 | `reeln-plugin` | Hook system, capability traits, plugin registry |
 | `reeln-ffi` | C ABI for OBS plugin (not used by this app — Tauri links crates directly) |
 
+### Config Ownership
+
+The main reeln config file (`~/.config/reeln/config/*.json`) is **owned by reeln-cli**.
+The dock reads and writes to this file but must preserve compatibility with the CLI's
+config parser and validator. Any changes to config structure or new fields must be
+coordinated with the reeln-cli project (`/Users/jremitz/workspace/reeln-cli/reeln/core`).
+
+- **Validator:** `reeln-cli/reeln/core/config.py` — `validate_config()` checks the raw JSON
+- **Deserializer:** Same file — converts JSON to `ReelnConfig` dataclass
+- **Schema:** Both string and object formats are valid for `event_types`; both must be
+  accepted by the CLI validator before the dock writes them
+
 ### Key Domain Concepts
 
 | Concept | Description |
