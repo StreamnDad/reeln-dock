@@ -14,8 +14,10 @@ export async function renderShort(
   scorer?: string,
   assist1?: string,
   assist2?: string,
+  playerNumbers?: string,
   debug?: boolean,
   configPath?: string,
+  noBranding?: boolean,
 ): Promise<RenderEntry> {
   return invoke<RenderEntry>("render_short", {
     inputClip,
@@ -28,8 +30,10 @@ export async function renderShort(
     scorer: scorer ?? null,
     assist1: assist1 ?? null,
     assist2: assist2 ?? null,
+    playerNumbers: playerNumbers ?? null,
     debug: debug ?? null,
     configPath: configPath ?? null,
+    noBranding: noBranding ?? null,
   });
 }
 
@@ -44,8 +48,10 @@ export async function renderIteration(
   scorer?: string,
   assist1?: string,
   assist2?: string,
+  playerNumbers?: string,
   debug?: boolean,
   configPath?: string,
+  noBranding?: boolean,
 ): Promise<RenderEntry[]> {
   return invoke<RenderEntry[]>("render_iteration", {
     inputClip,
@@ -58,8 +64,10 @@ export async function renderIteration(
     scorer: scorer ?? null,
     assist1: assist1 ?? null,
     assist2: assist2 ?? null,
+    playerNumbers: playerNumbers ?? null,
     debug: debug ?? null,
     configPath: configPath ?? null,
+    noBranding: noBranding ?? null,
   });
 }
 
@@ -94,4 +102,20 @@ export async function renderReel(
 
 export async function listRenderProfiles(): Promise<RenderProfile[]> {
   return invoke<RenderProfile[]>("list_render_profiles");
+}
+
+export async function renderProfilePreview(
+  inputClip: string,
+  outputDir: string,
+  profile: Partial<RenderProfile>,
+): Promise<string> {
+  return invoke<string>("render_profile_preview", {
+    inputClip,
+    outputDir,
+    profile,
+  });
+}
+
+export async function suggestPreviewClip(): Promise<string | null> {
+  return invoke<string | null>("suggest_preview_clip");
 }

@@ -62,6 +62,8 @@ export function addToQueue(item: {
   scorer?: string;
   assist1?: string;
   assist2?: string;
+  playerNumbers?: string;
+  noBranding?: boolean;
 }): void {
   queue = [
     ...queue,
@@ -132,8 +134,10 @@ async function renderItem(item: QueueItem): Promise<void> {
         item.scorer,
         item.assist1,
         item.assist2,
+        item.playerNumbers,
         item.debug,
         configPath,
+        item.noBranding,
       );
       queue = queue.map((q) =>
         q.id === item.id
@@ -158,8 +162,10 @@ async function renderItem(item: QueueItem): Promise<void> {
         item.scorer,
         item.assist1,
         item.assist2,
+        item.playerNumbers,
         item.debug,
         configPath,
+        item.noBranding,
       );
       queue = queue.map((q) =>
         q.id === item.id

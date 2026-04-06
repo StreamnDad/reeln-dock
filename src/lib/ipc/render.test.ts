@@ -14,6 +14,8 @@ import {
   deletePreview,
   renderReel,
   listRenderProfiles,
+  renderProfilePreview,
+  suggestPreviewClip,
 } from "./render";
 
 const mockInvoke = invoke as Mock;
@@ -47,8 +49,10 @@ describe("renderShort", () => {
       "player1",
       "assist1",
       "assist2",
+      "48,3,58",
       true,
       "/config/google.json",
+      false,
     );
 
     expect(mockInvoke).toHaveBeenCalledOnce();
@@ -63,8 +67,10 @@ describe("renderShort", () => {
       scorer: "player1",
       assist1: "assist1",
       assist2: "assist2",
+      playerNumbers: "48,3,58",
       debug: true,
       configPath: "/config/google.json",
+      noBranding: false,
     });
     expect(result).toEqual(fakeEntry);
   });
@@ -85,8 +91,10 @@ describe("renderShort", () => {
       scorer: null,
       assist1: null,
       assist2: null,
+      playerNumbers: null,
       debug: null,
       configPath: null,
+      noBranding: null,
     });
   });
 });
@@ -112,8 +120,10 @@ describe("renderIteration", () => {
       "scorer1",
       "a1",
       "a2",
+      "48,3",
       false,
       "/config/profile.json",
+      true,
     );
 
     expect(mockInvoke).toHaveBeenCalledWith("render_iteration", {
@@ -127,8 +137,10 @@ describe("renderIteration", () => {
       scorer: "scorer1",
       assist1: "a1",
       assist2: "a2",
+      playerNumbers: "48,3",
       debug: false,
       configPath: "/config/profile.json",
+      noBranding: true,
     });
     expect(result).toEqual(fakeEntries);
   });
@@ -149,8 +161,10 @@ describe("renderIteration", () => {
       scorer: null,
       assist1: null,
       assist2: null,
+      playerNumbers: null,
       debug: null,
       configPath: null,
+      noBranding: null,
     });
   });
 });
@@ -217,5 +231,53 @@ describe("listRenderProfiles", () => {
     const result = await listRenderProfiles();
     expect(mockInvoke).toHaveBeenCalledWith("list_render_profiles");
     expect(result).toEqual([{ name: "tiktok" }]);
+  });
+});
+
+describe("renderProfilePreview", () => {
+  it("passes inline profile to invoke", async () => {
+    mockInvoke.mockResolvedValue("/preview_output.mp4");
+    const profile = { name: "test", width: 1080, height: 1920, crop_mode: "crop" };
+    const result = await renderProfilePreview("/clip.mp4", "/renders", profile);
+    expect(mockInvoke).toHaveBeenCalledWith("render_profile_preview", {
+      inputClip: "/clip.mp4",
+      outputDir: "/renders",
+      profile,
+    });
+    expect(result).toBe("/preview_output.mp4");
+  });
+
+  it("handles empty profile object", async () => {
+    mockInvoke.mockResolvedValue("/preview.mp4");
+    const result = await renderProfilePreview("/clip.mp4", "/out", {});
+    expect(mockInvoke).toHaveBeenCalledWith("render_profile_preview", {
+      inputClip: "/clip.mp4",
+      outputDir: "/out",
+      profile: {},
+    });
+    expect(result).toBe("/preview.mp4");
+  });
+
+  it("propagates invoke errors", async () => {
+    mockInvoke.mockRejectedValue(new Error("Render failed"));
+    await expect(
+      renderProfilePreview("/clip.mp4", "/out", { name: "bad" }),
+    ).rejects.toThrow("Render failed");
+  });
+});
+
+describe("suggestPreviewClip", () => {
+  it("returns clip path when available", async () => {
+    mockInvoke.mockResolvedValue("/games/recent/events/clip.mp4");
+    const result = await suggestPreviewClip();
+    expect(mockInvoke).toHaveBeenCalledWith("suggest_preview_clip");
+    expect(result).toBe("/games/recent/events/clip.mp4");
+  });
+
+  it("returns null when no clips available", async () => {
+    mockInvoke.mockResolvedValue(null);
+    const result = await suggestPreviewClip();
+    expect(mockInvoke).toHaveBeenCalledWith("suggest_preview_clip");
+    expect(result).toBeNull();
   });
 });

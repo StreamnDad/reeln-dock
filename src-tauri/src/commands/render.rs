@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
+use reeln_state::RenderEntry;
+
 use crate::orchestration::{hook_executor, progress::ProgressReporter, render_ops};
 use crate::state::AppState;
 
@@ -104,10 +106,13 @@ pub async fn render_short(
     scorer: Option<String>,
     assist1: Option<String>,
     assist2: Option<String>,
+    player_numbers: Option<String>,
     debug: Option<bool>,
     config_path: Option<String>,
+    no_branding: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     let debug_flag = debug.unwrap_or(false);
+    let no_branding_flag = no_branding.unwrap_or(false);
 
     // Try CLI first (full features), fall back to native backend
     let cli_path = {
@@ -139,6 +144,7 @@ pub async fn render_short(
             anchor_y: o.anchor_y,
             pad_color: o.pad_color.clone(),
             zoom_frames: o.zoom_frames,
+            extra: o.extra.clone(),
         });
 
         let input = PathBuf::from(&input_clip);
@@ -149,6 +155,7 @@ pub async fn render_short(
         let sc = scorer.clone();
         let a1 = assist1.clone();
         let a2 = assist2.clone();
+        let pn = player_numbers.clone();
         let cli_owned = cli.clone();
         let et = event_type;
 
@@ -165,9 +172,12 @@ pub async fn render_short(
                 scorer: sc.as_deref(),
                 assist1: a1.as_deref(),
                 assist2: a2.as_deref(),
+                player_numbers: pn.as_deref(),
                 iterate: false,
                 event_type: et.as_deref(),
                 debug: debug_flag,
+                no_branding: no_branding_flag,
+                output_path: None,
             };
             render_ops::render_via_cli(&params)
         })
@@ -219,6 +229,7 @@ pub async fn render_short(
         anchor_y: o.anchor_y,
         pad_color: o.pad_color,
         zoom_frames: o.zoom_frames,
+        extra: o.extra,
     });
 
     let result = tokio::task::spawn_blocking(move || {
@@ -268,12 +279,17 @@ pub async fn render_iteration(
     scorer: Option<String>,
     assist1: Option<String>,
     assist2: Option<String>,
+    player_numbers: Option<String>,
     debug: Option<bool>,
     config_path: Option<String>,
+    no_branding: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     let debug_flag = debug.unwrap_or(false);
+    let no_branding_flag = no_branding.unwrap_or(false);
 
-    // Try CLI first — with --iterate, CLI handles multi-profile + concatenation
+    // Try CLI first — render each profile individually, then concat if needed.
+    // We do NOT use --iterate (which delegates profile resolution to the CLI
+    // and discards the user's explicit profile selections from the dock UI).
     let cli_path = {
         let settings = state.dock_settings.lock().map_err(|e| e.to_string())?;
         hook_executor::detect_reeln_cli(settings.reeln_cli_path.as_deref()).ok()
@@ -293,22 +309,9 @@ pub async fn render_iteration(
             })
         });
 
-        // Use the first profile's name for the CLI --render-profile flag
-        // (with --iterate, the CLI uses event type → profile mappings from config)
-        let first_profile = items.first().map(|i| i.profile_name.clone()).unwrap_or_default();
-
-        // Merge global overrides (if any)
-        let ovr = items.first().and_then(|i| i.overrides.as_ref()).map(|o| render_ops::RenderOverrides {
-            crop_mode: o.crop_mode.clone(),
-            scale: o.scale,
-            speed: o.speed,
-            smart: o.smart,
-            anchor_x: o.anchor_x,
-            anchor_y: o.anchor_y,
-            pad_color: o.pad_color.clone(),
-            zoom_frames: o.zoom_frames,
-        });
-
+        // Render each profile individually via CLI — each call renders exactly
+        // the profile the user selected in the dock, not whatever the CLI's
+        // config iteration mappings happen to resolve to.
         let input = PathBuf::from(&input_clip);
         let game_path = PathBuf::from(gdir.as_str());
         let render_mode = mode.clone();
@@ -316,32 +319,134 @@ pub async fn render_iteration(
         let sc = scorer.clone();
         let a1 = assist1.clone();
         let a2 = assist2.clone();
+        let pn = player_numbers.clone();
         let cli_owned = cli.clone();
         let et = event_type;
+        let items_owned = items.clone();
+        let cfg_path = config_path.clone();
 
+        // Compute unique output paths per profile (CLI would otherwise
+        // overwrite <stem>_short.mp4 on each call). Use the CLI's convention:
+        // <clip_parent>/shorts/<stem>_<profile>_short.mp4
+        let stem = input.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("clip")
+            .to_string();
+        let clip_parent = input.parent().unwrap_or(&game_path).to_path_buf();
+        let shorts_dir = clip_parent.join("shorts");
+        let per_profile_outputs: Vec<PathBuf> = items_owned.iter()
+            .map(|item| shorts_dir.join(format!("{stem}_{}_short.mp4", item.profile_name)))
+            .collect();
+
+        let outputs_owned = per_profile_outputs.clone();
         let result = tokio::task::spawn_blocking(move || {
-            let params = render_ops::CliRenderParams {
-                cli_path: &cli_owned,
-                config_path: config_path.as_deref(),
-                input_clip: &input,
-                game_dir: &game_path,
-                profile_name: &first_profile,
-                event_id: eid.as_deref(),
-                mode: render_mode.as_deref(),
-                overrides: ovr.as_ref(),
-                scorer: sc.as_deref(),
-                assist1: a1.as_deref(),
-                assist2: a2.as_deref(),
-                iterate: true,
-                event_type: et.as_deref(),
-                debug: debug_flag,
-            };
-            render_ops::render_via_cli(&params)
+            let mut all_entries = Vec::new();
+            for (item, out_path) in items_owned.iter().zip(outputs_owned.iter()) {
+                let ovr = item.overrides.as_ref().map(|o| render_ops::RenderOverrides {
+                    crop_mode: o.crop_mode.clone(),
+                    scale: o.scale,
+                    speed: o.speed,
+                    smart: o.smart,
+                    anchor_x: o.anchor_x,
+                    anchor_y: o.anchor_y,
+                    pad_color: o.pad_color.clone(),
+                    zoom_frames: o.zoom_frames,
+                    extra: o.extra.clone(),
+                });
+
+                let params = render_ops::CliRenderParams {
+                    cli_path: &cli_owned,
+                    config_path: cfg_path.as_deref(),
+                    input_clip: &input,
+                    game_dir: &game_path,
+                    profile_name: &item.profile_name,
+                    event_id: eid.as_deref(),
+                    mode: render_mode.as_deref(),
+                    overrides: ovr.as_ref(),
+                    scorer: sc.as_deref(),
+                    assist1: a1.as_deref(),
+                    assist2: a2.as_deref(),
+                    player_numbers: pn.as_deref(),
+                    iterate: false,
+                    event_type: et.as_deref(),
+                    debug: debug_flag,
+                    no_branding: no_branding_flag,
+                    output_path: Some(out_path.as_path()),
+                };
+                let entries = render_ops::render_via_cli(&params)?;
+                all_entries.extend(entries);
+            }
+            Ok::<Vec<RenderEntry>, String>(all_entries)
         })
         .await
         .map_err(|e| e.to_string())?;
 
-        let entries = result?;
+        let mut entries = result?;
+
+        // Concatenate individual renders into a single file if requested.
+        // Use the absolute paths we passed to --output (entries[].output may
+        // be relative to game_dir, which won't resolve from this process).
+        if concat_output && per_profile_outputs.len() > 1 {
+            let backend = state.media_backend.clone();
+            let config = state.config.lock().map_err(|e| e.to_string())?
+                .clone().ok_or_else(|| "Config not loaded for concat".to_string())?;
+            let short_paths = per_profile_outputs.clone();
+            let concat_path = shorts_dir.join(format!("{stem}_iteration.mp4"));
+            let profile_names_str = items.iter()
+                .map(|i| i.profile_name.as_str())
+                .collect::<Vec<_>>()
+                .join("+");
+            let input_clip_ref = input_clip.clone();
+            let concat_path_owned = concat_path.clone();
+
+            let concat_entry = tokio::task::spawn_blocking(move || {
+                let refs: Vec<&Path> = short_paths.iter().map(|p| p.as_path()).collect();
+                if let Some(parent) = concat_path_owned.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+
+                let opts = reeln_media::ConcatOptions {
+                    copy: false,
+                    video_codec: config.video.codec.clone(),
+                    crf: config.video.crf,
+                    audio_codec: config.video.audio_codec.clone(),
+                    audio_rate: 48000,
+                };
+                backend.concat(&refs, &concat_path_owned, &opts).map_err(|e| e.to_string())?;
+
+                // Clean up individual renders
+                for path in &short_paths {
+                    let _ = std::fs::remove_file(path);
+                }
+
+                Ok::<RenderEntry, String>(RenderEntry {
+                    input: input_clip_ref,
+                    output: concat_path_owned.display().to_string(),
+                    segment_number: 0,
+                    format: profile_names_str,
+                    crop_mode: String::new(),
+                    rendered_at: chrono::Utc::now().to_rfc3339(),
+                    event_id: String::new(),
+                })
+            })
+            .await
+            .map_err(|e: tokio::task::JoinError| e.to_string())??;
+
+            // Update game.json: replace individual entries with concat entry.
+            // The per-profile entries are identified by their output paths,
+            // which are stored relative to game_dir by the CLI.
+            let game_path = Path::new(gdir.as_str());
+            let mut game_state = reeln_state::load_game_state(game_path)
+                .map_err(|e| e.to_string())?;
+            let removed_outputs: Vec<String> = entries.iter().map(|e| e.output.clone()).collect();
+            game_state.renders.retain(|r| !removed_outputs.contains(&r.output));
+            game_state.renders.push(concat_entry.clone());
+            reeln_state::save_game_state(&game_state, game_path)
+                .map_err(|e| e.to_string())?;
+
+            entries = vec![concat_entry];
+        }
+
         return serde_json::to_value(&entries).map_err(|e| e.to_string());
     }
 
@@ -386,6 +491,7 @@ pub async fn render_iteration(
                 anchor_y: o.anchor_y,
                 pad_color: o.pad_color,
                 zoom_frames: o.zoom_frames,
+                extra: o.extra,
             }),
         })
         .collect();
@@ -520,6 +626,96 @@ pub async fn render_reel(
         "duration_secs": render_result.duration_secs,
     }))
     .map_err(|e| e.to_string())
+}
+
+/// Render a preview using an inline (unsaved) profile object.
+/// Used by the profile editor so users can preview changes before saving.
+#[tauri::command]
+pub async fn render_profile_preview(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    input_clip: String,
+    output_dir: String,
+    profile: serde_json::Value,
+) -> Result<String, String> {
+    let backend = state.media_backend.clone();
+    let config = state
+        .config
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+    let input = PathBuf::from(&input_clip);
+    let out_dir = PathBuf::from(&output_dir);
+
+    let job_id = uuid::Uuid::new_v4().to_string();
+    let reporter = ProgressReporter::new(app, job_id);
+
+    let result = tokio::task::spawn_blocking(move || {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            render_ops::render_profile_preview(
+                &backend,
+                &input,
+                &out_dir,
+                config.as_ref(),
+                &profile,
+                Some(&reporter),
+            )
+        }))
+        .unwrap_or_else(|_| Err("Preview render crashed — try different profile settings".to_string()))
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    result.map(|p| p.display().to_string())
+}
+
+/// Suggest a clip for preview by scanning recent games.
+#[tauri::command]
+pub fn suggest_preview_clip(
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let config = state
+        .config
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+
+    let config = match config {
+        Some(c) => c,
+        None => return Ok(None),
+    };
+
+    let output_dir = match &config.paths.output_dir {
+        Some(p) if p.is_dir() => p,
+        _ => return Ok(None),
+    };
+
+    // Scan for game directories, sorted by modification time (newest first)
+    let mut game_dirs: Vec<_> = std::fs::read_dir(output_dir)
+        .map_err(|e| e.to_string())?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| {
+            let modified = entry.metadata().ok()?.modified().ok()?;
+            Some((entry.path(), modified))
+        })
+        .collect();
+
+    game_dirs.sort_by(|a, b| b.1.cmp(&a.1));
+
+    // Find the first game with an event that has a clip
+    for (game_path, _) in game_dirs.iter().take(10) {
+        if let Ok(game_state) = reeln_state::load_game_state(game_path) {
+            for event in &game_state.events {
+                let clip_path = game_path.join(&event.clip);
+                if clip_path.is_file() {
+                    return Ok(Some(clip_path.display().to_string()));
+                }
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 #[tauri::command]

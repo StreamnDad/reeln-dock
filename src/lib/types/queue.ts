@@ -17,6 +17,8 @@ export interface QueueItem {
   scorer?: string;
   assist1?: string;
   assist2?: string;
+  playerNumbers?: string;
+  noBranding?: boolean;
   status: "pending" | "rendering" | "done" | "error";
   jobId?: string;
   error?: string;

@@ -20,6 +20,8 @@ pub struct PluginProfile {
 }
 
 /// Default overrides for render parameters.
+/// Mirrors all fields in `render_ops::RenderOverrides` so every CLI-supported
+/// override can be preset in dock settings.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RenderOverrideDefaults {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -30,6 +32,14 @@ pub struct RenderOverrideDefaults {
     pub speed: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub smart: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_x: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_y: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pad_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zoom_frames: Option<u32>,
 }
 
 /// Rendering default preferences, persisted in dock settings.
@@ -279,5 +289,9 @@ mod tests {
         assert!(rod.scale.is_none());
         assert!(rod.speed.is_none());
         assert!(rod.smart.is_none());
+        assert!(rod.anchor_x.is_none());
+        assert!(rod.anchor_y.is_none());
+        assert!(rod.pad_color.is_none());
+        assert!(rod.zoom_frames.is_none());
     }
 }

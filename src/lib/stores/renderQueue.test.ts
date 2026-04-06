@@ -221,8 +221,10 @@ describe("renderQueue store", () => {
         scorer,
         assist1,
         assist2,
+        playerNumbers,
         debug,
         configPath,
+        noBranding,
       ] = mockRenderShort.mock.calls[0];
 
       expect(inputClip).toBe("/games/test/clips/clip.mp4");
@@ -236,8 +238,10 @@ describe("renderQueue store", () => {
       expect(scorer).toBe("Scorer");
       expect(assist1).toBe("Assist1");
       expect(assist2).toBe("Assist2");
+      expect(playerNumbers).toBeUndefined();
       expect(debug).toBe(true);
       expect(configPath).toBe("/config/google-test.json");
+      expect(noBranding).toBeUndefined();
     });
 
     it("marks item done with results on success", async () => {
@@ -343,8 +347,10 @@ describe("renderQueue store", () => {
         scorer,
         assist1,
         assist2,
+        playerNumbers,
         debug,
         configPath,
+        noBranding,
       ] = mockRenderIteration.mock.calls[0];
 
       expect(inputClip).toBe("/clip.mp4");
@@ -361,8 +367,10 @@ describe("renderQueue store", () => {
       expect(scorer).toBe("S");
       expect(assist1).toBe("A1");
       expect(assist2).toBe("A2");
+      expect(playerNumbers).toBeUndefined();
       expect(debug).toBe(false);
       expect(configPath).toBe("/config/google.json");
+      expect(noBranding).toBeUndefined();
     });
   });
 
@@ -390,8 +398,8 @@ describe("renderQueue store", () => {
       const id = store.getQueue()[0].id;
       await store.renderSingle(id);
 
-      // configPath should be undefined (error fallback)
-      const configPath = mockRenderShort.mock.calls[0][11];
+      // configPath should be undefined (error fallback) — position 13 after playerNumbers
+      const configPath = mockRenderShort.mock.calls[0][13];
       expect(configPath).toBeUndefined();
     });
   });

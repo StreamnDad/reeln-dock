@@ -10,6 +10,9 @@ use reeln_state::RenderEntry;
 use super::progress::ProgressReporter;
 
 /// Parameters for CLI-based rendering.
+///
+/// Each field maps 1:1 to a `reeln render short|apply` CLI flag.
+/// See CLI-Parity Mandate in CLAUDE.md.
 pub struct CliRenderParams<'a> {
     pub cli_path: &'a str,
     pub config_path: Option<&'a str>,
@@ -22,9 +25,15 @@ pub struct CliRenderParams<'a> {
     pub scorer: Option<&'a str>,
     pub assist1: Option<&'a str>,
     pub assist2: Option<&'a str>,
+    /// Jersey numbers for scorer[,assist1[,assist2]] — maps to `--player-numbers`.
+    pub player_numbers: Option<&'a str>,
     pub iterate: bool,
     pub event_type: Option<&'a str>,
     pub debug: bool,
+    /// Disable branding overlay — maps to `--no-branding`. Default false (branding ON).
+    pub no_branding: bool,
+    /// Explicit output file path — maps to `--output`. When None, CLI uses its default.
+    pub output_path: Option<&'a Path>,
 }
 
 /// Render via the reeln CLI subprocess. Returns new RenderEntries added to game state.
@@ -50,6 +59,11 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
 
     // Game dir
     cmd.arg("--game-dir").arg(params.game_dir);
+
+    // Explicit output path (avoids filename collision between profiles)
+    if let Some(out) = params.output_path {
+        cmd.arg("--output").arg(out);
+    }
 
     // Event ID
     if let Some(eid) = params.event_id {
@@ -95,6 +109,26 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
         }
     }
 
+    // Anchor (crop anchor position) — only for "short" mode
+    if subcommand == "short" {
+        if let Some(ovr) = params.overrides {
+            if let (Some(ax), Some(ay)) = (ovr.anchor_x, ovr.anchor_y) {
+                cmd.arg("--anchor").arg(format!("{ax},{ay}"));
+            }
+        }
+    }
+
+    // Plugin-contributed fields → --plugin-input KEY=VALUE
+    if let Some(ovr) = params.overrides {
+        for (key, val) in &ovr.extra {
+            let val_str = match val {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            cmd.arg("--plugin-input").arg(format!("{key}={val_str}"));
+        }
+    }
+
     // Player info
     if let Some(scorer) = params.scorer {
         if !scorer.is_empty() {
@@ -108,6 +142,12 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
             .collect();
         if !assists.is_empty() {
             cmd.arg("--assists").arg(assists.join(","));
+        }
+    }
+    // Jersey numbers for roster lookup
+    if let Some(pn) = params.player_numbers {
+        if !pn.is_empty() {
+            cmd.arg("--player-numbers").arg(pn);
         }
     }
 
@@ -128,8 +168,8 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
         cmd.arg("--debug");
     }
 
-    // Disable branding — native backend doesn't have subtitles filter (libass)
-    if subcommand == "short" {
+    // Branding: on by default (matches CLI default). Only disable when explicitly requested.
+    if params.no_branding {
         cmd.arg("--no-branding");
     }
 
@@ -220,6 +260,8 @@ pub struct RenderOverrides {
     pub anchor_y: Option<f64>,
     pub pad_color: Option<String>,
     pub zoom_frames: Option<u32>,
+    /// Plugin-contributed fields — passed to CLI as `--plugin-input KEY=VALUE`.
+    pub extra: HashMap<String, serde_json::Value>,
 }
 
 /// A single item in a render iteration queue.
@@ -747,6 +789,127 @@ pub fn render_reel(
     })
 }
 
+/// Render a preview from an inline (unsaved) profile JSON.
+/// Used by the profile editor for real-time preview.
+///
+/// Safety: probes the input first so filter dimensions never exceed the source,
+/// preventing libav crashes from impossible crop/scale combos.
+pub fn render_profile_preview(
+    backend: &Arc<dyn MediaBackend>,
+    input_clip: &Path,
+    output_dir: &Path,
+    config: Option<&AppConfig>,
+    profile_json: &serde_json::Value,
+    reporter: Option<&ProgressReporter>,
+) -> Result<PathBuf, String> {
+    if !input_clip.is_file() {
+        return Err(format!("Clip not found: {}", input_clip.display()));
+    }
+
+    let profile: RenderProfile =
+        serde_json::from_value(profile_json.clone()).map_err(|e| e.to_string())?;
+
+    // Probe source to get dimensions — needed for safe filter construction
+    let source = backend.probe(input_clip).map_err(|e| e.to_string())?;
+    let src_w = source.width.unwrap_or(1920);
+    let src_h = source.height.unwrap_or(1080);
+
+    let stem = input_clip
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("clip");
+    let output = output_dir.join(format!("{stem}_profile_preview.mp4"));
+
+    std::fs::create_dir_all(output_dir).map_err(|e| e.to_string())?;
+
+    if let Some(r) = reporter {
+        r.report("render", 0.1, "Rendering profile preview");
+    }
+
+    let mut filters = Vec::new();
+
+    // Scale/crop — always safe: scale first, then crop if needed
+    if let (Some(w), Some(h)) = (profile.width, profile.height) {
+        // Ensure even dimensions
+        let w = w & !1;
+        let h = h & !1;
+        match profile.crop_mode.as_deref() {
+            Some("crop") => {
+                // Scale so the smaller dimension fills the target, then center-crop
+                // This avoids crop=WxH on a source that's smaller than WxH.
+                filters.push(format!(
+                    "scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
+                ));
+            }
+            Some("pad") => {
+                let pad_color = profile.pad_color.as_deref().unwrap_or("black");
+                filters.push(format!(
+                    "scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color={pad_color}"
+                ));
+            }
+            _ => {
+                filters.push(format!("scale={w}:{h}"));
+            }
+        }
+    } else if let Some(w) = profile.width {
+        let w = w & !1;
+        filters.push(format!("scale={w}:-2"));
+    } else if let Some(h) = profile.height {
+        let h = h & !1;
+        filters.push(format!("scale=-2:{h}"));
+    } else {
+        // No dimensions — scale down for fast preview, keep aspect
+        let preview_w = src_w.min(640) & !1;
+        filters.push(format!("scale={preview_w}:-2"));
+    }
+
+    // Speed filter
+    let mut audio_filter = None;
+    if let Some(speed) = profile.speed {
+        if (speed - 1.0).abs() > f64::EPSILON && speed > 0.0 {
+            let pts_factor = 1.0 / speed;
+            filters.push(format!("setpts={pts_factor:.4}*PTS"));
+            // atempo only accepts 0.5–100.0
+            let clamped = speed.max(0.5).min(100.0);
+            audio_filter = Some(format!("atempo={clamped}"));
+        }
+    }
+
+    // LUT filter — only if file exists
+    if let Some(ref lut) = profile.lut {
+        if !lut.is_empty() && Path::new(lut).is_file() {
+            filters.push(format!("lut3d={lut}"));
+        }
+    }
+
+    let video_codec = profile.codec.clone().unwrap_or_else(|| {
+        config
+            .map(|c| c.video.codec.clone())
+            .unwrap_or_else(|| "libx264".to_string())
+    });
+
+    let plan = RenderPlan {
+        input: input_clip.to_path_buf(),
+        output: output.clone(),
+        video_codec,
+        crf: 28,
+        preset: Some("ultrafast".to_string()),
+        audio_codec: "aac".to_string(),
+        audio_bitrate: Some(96),
+        filters,
+        filter_complex: None,
+        audio_filter,
+    };
+
+    backend.render(&plan).map_err(|e| e.to_string())?;
+
+    if let Some(r) = reporter {
+        r.report("done", 1.0, "Profile preview ready");
+    }
+
+    Ok(output)
+}
+
 /// List available render profiles from config.
 pub fn list_render_profiles(config: &AppConfig) -> Vec<RenderProfile> {
     config
@@ -826,6 +989,9 @@ mod tests {
             iterate: false,
             event_type: None,
             debug: false,
+            player_numbers: None,
+            no_branding: false,
+            output_path: None,
         };
 
         let _ = render_via_cli(&params); // will error — we only care about args
@@ -838,13 +1004,14 @@ mod tests {
         assert_eq!(args[4], "tiktok");
         assert_eq!(args[5], "--game-dir");
         assert_eq!(args[6], game_dir.to_str().unwrap());
-        // --no-branding appended for short mode
-        assert!(args.contains(&"--no-branding".to_string()));
-        // No --config, --event, --iterate, --debug
+        // --no-branding only when explicitly requested (not hardcoded)
+        assert!(!args.contains(&"--no-branding".to_string()));
+        // No --config, --event, --iterate, --debug, --player-numbers
         assert!(!args.contains(&"--config".to_string()));
         assert!(!args.contains(&"--event".to_string()));
         assert!(!args.contains(&"--iterate".to_string()));
         assert!(!args.contains(&"--debug".to_string()));
+        assert!(!args.contains(&"--player-numbers".to_string()));
     }
 
     #[test]
@@ -872,6 +1039,9 @@ mod tests {
             iterate: false,
             event_type: None,
             debug: false,
+            player_numbers: None,
+            no_branding: false,
+            output_path: None,
         };
 
         let _ = render_via_cli(&params);
@@ -908,6 +1078,9 @@ mod tests {
             iterate: false,
             event_type: None,
             debug: false,
+            player_numbers: None,
+            no_branding: false,
+            output_path: None,
         };
 
         let _ = render_via_cli(&params);
@@ -915,6 +1088,44 @@ mod tests {
 
         let idx = args.iter().position(|a| a == "--config").unwrap();
         assert_eq!(args[idx + 1], "/config/google-test.json");
+    }
+
+    #[test]
+    fn test_cli_args_with_output_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args.txt");
+        let script = make_arg_dump_script(dir.path(), &args_file);
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let game_dir = dir.path().join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+        let out = game_dir.join("shorts").join("clip_player_short.mp4");
+
+        let params = CliRenderParams {
+            cli_path: script.to_str().unwrap(),
+            config_path: None,
+            input_clip: &input,
+            game_dir: &game_dir,
+            profile_name: "tiktok",
+            event_id: None,
+            mode: None,
+            overrides: None,
+            scorer: None,
+            assist1: None,
+            assist2: None,
+            iterate: false,
+            event_type: None,
+            debug: false,
+            player_numbers: None,
+            no_branding: false,
+            output_path: Some(out.as_path()),
+        };
+
+        let _ = render_via_cli(&params);
+        let args = read_dumped_args(&args_file);
+
+        let idx = args.iter().position(|a| a == "--output").unwrap();
+        assert_eq!(args[idx + 1], out.to_str().unwrap());
     }
 
     #[test]
@@ -942,6 +1153,9 @@ mod tests {
             iterate: false,
             event_type: None,
             debug: false,
+            player_numbers: None,
+            no_branding: false,
+            output_path: None,
         };
 
         let _ = render_via_cli(&params);
@@ -976,6 +1190,9 @@ mod tests {
             iterate: false,
             event_type: None,
             debug: false,
+            player_numbers: None,
+            no_branding: false,
+            output_path: None,
         };
 
         let _ = render_via_cli(&params);
@@ -1018,6 +1235,9 @@ mod tests {
             iterate: false,
             event_type: None,
             debug: false,
+            player_numbers: None,
+            no_branding: false,
+            output_path: None,
         };
 
         let _ = render_via_cli(&params);
@@ -1073,6 +1293,9 @@ mod tests {
             iterate: false,
             event_type: None,
             debug: false,
+            player_numbers: None,
+            no_branding: false,
+            output_path: None,
         };
 
         let _ = render_via_cli(&params);
@@ -1115,6 +1338,9 @@ mod tests {
             iterate: false,
             event_type: None,
             debug: false,
+            player_numbers: None,
+            no_branding: false,
+            output_path: None,
         };
 
         let _ = render_via_cli(&params);
@@ -1149,6 +1375,9 @@ mod tests {
             iterate: false,
             event_type: None,
             debug: false,
+            player_numbers: None,
+            no_branding: false,
+            output_path: None,
         };
 
         let _ = render_via_cli(&params);
@@ -1186,6 +1415,9 @@ mod tests {
             iterate: true,
             event_type: Some("goal"),
             debug: true,
+            player_numbers: None,
+            no_branding: false,
+            output_path: None,
         };
 
         let _ = render_via_cli(&params);
@@ -1193,6 +1425,8 @@ mod tests {
 
         assert!(args.contains(&"--iterate".to_string()));
         assert!(args.contains(&"--debug".to_string()));
+        // no_branding is false — --no-branding should NOT be present
+        assert!(!args.contains(&"--no-branding".to_string()));
 
         let et_idx = args.iter().position(|a| a == "--event-type").unwrap();
         assert_eq!(args[et_idx + 1], "goal");
@@ -1215,6 +1449,12 @@ mod tests {
             smart: Some(true),
             zoom_frames: Some(10),
             pad_color: Some("black".to_string()),
+            extra: {
+                let mut m = HashMap::new();
+                m.insert("smart_zoom".to_string(), serde_json::Value::Bool(true));
+                m.insert("quality".to_string(), serde_json::Value::String("high".to_string()));
+                m
+            },
             ..Default::default()
         };
 
@@ -1233,6 +1473,9 @@ mod tests {
             iterate: true,
             event_type: Some("goal"),
             debug: true,
+            player_numbers: Some("48,3,58"),
+            no_branding: true,
+            output_path: None,
         };
 
         let _ = render_via_cli(&params);
@@ -1255,6 +1498,17 @@ mod tests {
         assert!(args.contains(&"--event-type".to_string()));
         assert!(args.contains(&"--debug".to_string()));
         assert!(args.contains(&"--no-branding".to_string()));
+        let pn_idx = args.iter().position(|a| a == "--player-numbers").unwrap();
+        assert_eq!(args[pn_idx + 1], "48,3,58");
+        // Plugin inputs
+        let pi_indices: Vec<usize> = args.iter().enumerate()
+            .filter(|(_, a)| *a == "--plugin-input")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(pi_indices.len(), 2);
+        let pi_values: Vec<&str> = pi_indices.iter().map(|i| args[i + 1].as_str()).collect();
+        assert!(pi_values.contains(&"smart_zoom=true"));
+        assert!(pi_values.contains(&"quality=high"));
     }
 
     // -----------------------------------------------------------------------
@@ -1273,6 +1527,7 @@ mod tests {
             anchor_y: Some(0.7),
             pad_color: Some("white".to_string()),
             zoom_frames: None, // not applied in apply_overrides (only CLI flag)
+            extra: HashMap::new(),
         };
 
         apply_overrides(&mut profile, &overrides);
@@ -1957,5 +2212,181 @@ mod tests {
         let config = AppConfig::default();
         let profiles = list_render_profiles(&config);
         assert!(profiles.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // render_profile_preview
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_render_profile_preview_basic() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let out_dir = dir.path().join("renders");
+
+        let backend = crate::test_utils::mock_backend();
+        let profile = serde_json::json!({"name": "test", "width": 1080, "height": 1920});
+
+        let result = render_profile_preview(&backend, &input, &out_dir, None, &profile, None);
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.exists());
+        assert!(path.to_str().unwrap().contains("profile_preview"));
+    }
+
+    #[test]
+    fn test_render_profile_preview_with_crop() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let out_dir = dir.path().join("renders");
+
+        let backend = crate::test_utils::mock_backend();
+        let profile = serde_json::json!({
+            "name": "crop-test",
+            "width": 1080,
+            "height": 1920,
+            "crop_mode": "crop"
+        });
+
+        let result = render_profile_preview(&backend, &input, &out_dir, None, &profile, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_render_profile_preview_with_pad() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let out_dir = dir.path().join("renders");
+
+        let backend = crate::test_utils::mock_backend();
+        let profile = serde_json::json!({
+            "name": "pad-test",
+            "width": 1080,
+            "height": 1920,
+            "crop_mode": "pad",
+            "pad_color": "#ff0000"
+        });
+
+        let result = render_profile_preview(&backend, &input, &out_dir, None, &profile, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_render_profile_preview_with_speed() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let out_dir = dir.path().join("renders");
+
+        let backend = crate::test_utils::mock_backend();
+        let profile = serde_json::json!({"name": "speed-test", "speed": 1.5});
+
+        let result = render_profile_preview(&backend, &input, &out_dir, None, &profile, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_render_profile_preview_with_lut() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let out_dir = dir.path().join("renders");
+
+        let backend = crate::test_utils::mock_backend();
+        let profile = serde_json::json!({"name": "lut-test", "lut": "/path/to/color.cube"});
+
+        let result = render_profile_preview(&backend, &input, &out_dir, None, &profile, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_render_profile_preview_empty_profile_uses_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let out_dir = dir.path().join("renders");
+
+        let backend = crate::test_utils::mock_backend();
+        let profile = serde_json::json!({});
+
+        let result = render_profile_preview(&backend, &input, &out_dir, None, &profile, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_render_profile_preview_width_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let out_dir = dir.path().join("renders");
+
+        let backend = crate::test_utils::mock_backend();
+        let profile = serde_json::json!({"width": 720});
+
+        let result = render_profile_preview(&backend, &input, &out_dir, None, &profile, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_render_profile_preview_height_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let out_dir = dir.path().join("renders");
+
+        let backend = crate::test_utils::mock_backend();
+        let profile = serde_json::json!({"height": 480});
+
+        let result = render_profile_preview(&backend, &input, &out_dir, None, &profile, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_render_profile_preview_with_config_codec() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let out_dir = dir.path().join("renders");
+
+        let mut config = AppConfig::default();
+        config.video.codec = "libx265".to_string();
+
+        let backend = crate::test_utils::mock_backend();
+        let profile = serde_json::json!({"name": "with-config"});
+
+        let result = render_profile_preview(&backend, &input, &out_dir, Some(&config), &profile, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_render_profile_preview_empty_lut_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let out_dir = dir.path().join("renders");
+
+        let backend = crate::test_utils::mock_backend();
+        let profile = serde_json::json!({"name": "empty-lut", "lut": ""});
+
+        let result = render_profile_preview(&backend, &input, &out_dir, None, &profile, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_render_profile_preview_speed_1_no_filter() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let out_dir = dir.path().join("renders");
+
+        let backend = crate::test_utils::mock_backend();
+        // Speed of 1.0 should NOT add speed filter
+        let profile = serde_json::json!({"name": "normal-speed", "speed": 1.0});
+
+        let result = render_profile_preview(&backend, &input, &out_dir, None, &profile, None);
+        assert!(result.is_ok());
     }
 }

@@ -43,6 +43,33 @@ coordinated with the reeln-cli project (`/Users/jremitz/workspace/reeln-cli/reel
 - **Schema:** Both string and object formats are valid for `event_types`; both must be
   accepted by the CLI validator before the dock writes them
 
+### CLI-Parity Mandate (CRITICAL)
+
+**The dock is a GUI wrapper around reeln-cli. Every dock action must produce identical
+results to the equivalent CLI command.** This is a non-negotiable architectural constraint.
+
+Rules:
+
+1. **No proprietary logic.** If a feature exists in the dock, it must map 1:1 to a CLI
+   command or flag. The dock must never invent render behavior, config interpretation,
+   or iteration logic that doesn't exist in the CLI.
+2. **User selections are authoritative.** When the user selects profiles, overrides, or
+   options in the dock UI, those exact values must be passed to the CLI. Never delegate
+   decision-making back to the CLI (e.g., via `--iterate`) when the dock already has the
+   user's explicit choices.
+3. **Same config, same result.** Given the same config file and input clip, `reeln render`
+   from the terminal and "Render" from the dock must produce byte-equivalent output.
+4. **CLI flags are the contract.** Every Tauri IPC command that shells out to the CLI must
+   construct the same flags a user would type. Document which CLI command each IPC handler
+   maps to.
+5. **Test parity.** When adding render/config IPC, include a test that verifies the
+   constructed CLI args match expected `reeln` invocations.
+6. **Dock-only settings are GUI-only.** Window size, sidebar mode, auto-play — these are
+   dock-specific and don't touch CLI behavior. Everything else (render profiles, iteration
+   mappings, event types, plugin config) must round-trip through the CLI's config format.
+
+Violation of CLI parity is a **critical bug** — treat it with the same urgency as data loss.
+
 ### Key Domain Concepts
 
 | Concept | Description |

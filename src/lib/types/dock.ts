@@ -21,6 +21,10 @@ export interface RenderOverrideDefaults {
   scale?: number;
   speed?: number;
   smart?: boolean;
+  anchor_x?: number;
+  anchor_y?: number;
+  pad_color?: string;
+  zoom_frames?: number;
 }
 
 export interface RenderingDefaults {

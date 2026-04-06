@@ -157,6 +157,10 @@
       scale: dockOverrides?.scale ?? 1.0,
       speed: dockOverrides?.speed ?? 1.0,
       smart: dockOverrides?.smart,
+      anchor_x: dockOverrides?.anchor_x,
+      anchor_y: dockOverrides?.anchor_y,
+      pad_color: dockOverrides?.pad_color,
+      zoom_frames: dockOverrides?.zoom_frames,
     };
   });
 
