@@ -28,3 +28,23 @@ export async function saveEventTypes(
 ): Promise<void> {
   return invoke<void>("save_event_types", { eventTypes });
 }
+
+export async function saveRenderProfile(
+  profileKey: string,
+  profile: Record<string, unknown>,
+): Promise<void> {
+  return invoke<void>("save_render_profile", { profileKey, profile });
+}
+
+export async function deleteRenderProfile(
+  profileKey: string,
+): Promise<void> {
+  return invoke<void>("delete_render_profile", { profileKey });
+}
+
+export async function renameRenderProfile(
+  oldKey: string,
+  newKey: string,
+): Promise<void> {
+  return invoke<void>("rename_render_profile", { oldKey, newKey });
+}

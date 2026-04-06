@@ -11,13 +11,14 @@
   import TeamsSettingsTab from "./TeamsSettingsTab.svelte";
   import TournamentsSettingsTab from "./TournamentsSettingsTab.svelte";
   import RenderingSettingsTab from "./RenderingSettingsTab.svelte";
+  import ProfilesSettingsTab from "./ProfilesSettingsTab.svelte";
   import { settingsTeamTarget, settingsTournamentTarget } from "$lib/stores/navigation";
   import { useStore } from "$lib/stores/bridge.svelte";
   import { getCliStatus, refreshCliStatus } from "$lib/stores/cli.svelte";
 
   let config = $derived(getConfig());
   let dockSettings = $derived(getDockSettings());
-  let activeTab = $state<"dock" | "teams" | "tournaments" | "event-types" | "rendering" | "config" | "logs">("dock");
+  let activeTab = $state<"dock" | "teams" | "tournaments" | "event-types" | "rendering" | "profiles" | "config" | "logs">("dock");
 
   const getTeamTarget = useStore(settingsTeamTarget);
   const getTournamentTarget = useStore(settingsTournamentTarget);
@@ -200,6 +201,15 @@
     </button>
     <button
       class="px-3 py-1.5 text-sm rounded transition-colors"
+      class:bg-primary={activeTab === "profiles"}
+      class:text-text-muted={activeTab !== "profiles"}
+      class:hover:text-text={activeTab !== "profiles"}
+      onclick={() => (activeTab = "profiles")}
+    >
+      Profiles
+    </button>
+    <button
+      class="px-3 py-1.5 text-sm rounded transition-colors"
       class:bg-primary={activeTab === "config"}
       class:text-text-muted={activeTab !== "config"}
       class:hover:text-text={activeTab !== "config"}
@@ -230,6 +240,9 @@
 
   {:else if activeTab === "rendering"}
     <RenderingSettingsTab />
+
+  {:else if activeTab === "profiles"}
+    <ProfilesSettingsTab />
 
   {:else if activeTab === "dock"}
     <div class="bg-surface rounded-lg border border-border p-4 space-y-4">

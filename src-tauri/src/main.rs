@@ -44,6 +44,9 @@ fn main() {
             commands::config::load_config_from_path,
             commands::config::get_config_path,
             commands::config::save_event_types,
+            commands::config::save_render_profile,
+            commands::config::delete_render_profile,
+            commands::config::rename_render_profile,
             commands::config::save_render_queue,
             commands::config::load_render_queue,
             // Games (read)
@@ -73,6 +76,8 @@ fn main() {
             commands::render::render_preview,
             commands::render::delete_preview,
             commands::render::render_reel,
+            commands::render::render_profile_preview,
+            commands::render::suggest_preview_clip,
             commands::render::list_render_profiles,
             commands::render::get_iteration_profiles,
             // Teams

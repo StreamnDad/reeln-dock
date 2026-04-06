@@ -59,6 +59,38 @@ export interface RenderProfile {
   audio_bitrate?: string;
 }
 
+export interface ProfilePreset {
+  label: string;
+  profile: Partial<RenderProfile>;
+}
+
+export const PROFILE_PRESETS: ProfilePreset[] = [
+  {
+    label: "TikTok 9:16",
+    profile: { width: 1080, height: 1920, crop_mode: "crop", anchor_x: 0.5, anchor_y: 0.5 },
+  },
+  {
+    label: "YouTube 16:9",
+    profile: { width: 1920, height: 1080, crop_mode: "pad" },
+  },
+  {
+    label: "Instagram Square",
+    profile: { width: 1080, height: 1080, crop_mode: "crop", anchor_x: 0.5, anchor_y: 0.5 },
+  },
+  {
+    label: "Instagram Reels",
+    profile: { width: 1080, height: 1920, crop_mode: "crop", anchor_x: 0.5, anchor_y: 0.5 },
+  },
+  {
+    label: "Twitter/X",
+    profile: { width: 1280, height: 720, crop_mode: "pad" },
+  },
+  {
+    label: "Full Frame",
+    profile: {},
+  },
+];
+
 export interface IterationConfig {
   mappings: Record<string, string[]>;
 }
