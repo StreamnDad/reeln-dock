@@ -4,6 +4,7 @@ pub mod hooks;
 pub mod media;
 pub mod plugins;
 pub mod prompts;
+pub mod queue;
 pub mod render;
 pub mod sports;
 pub mod teams;

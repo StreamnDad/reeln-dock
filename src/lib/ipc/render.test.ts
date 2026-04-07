@@ -71,6 +71,7 @@ describe("renderShort", () => {
       debug: true,
       configPath: "/config/google.json",
       noBranding: false,
+      queue: null,
     });
     expect(result).toEqual(fakeEntry);
   });
@@ -95,6 +96,7 @@ describe("renderShort", () => {
       debug: null,
       configPath: null,
       noBranding: null,
+      queue: null,
     });
   });
 });
@@ -141,6 +143,7 @@ describe("renderIteration", () => {
       debug: false,
       configPath: "/config/profile.json",
       noBranding: true,
+      queue: null,
     });
     expect(result).toEqual(fakeEntries);
   });
@@ -165,6 +168,7 @@ describe("renderIteration", () => {
       debug: null,
       configPath: null,
       noBranding: null,
+      queue: null,
     });
   });
 });

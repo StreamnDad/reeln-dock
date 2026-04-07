@@ -18,6 +18,7 @@ export async function renderShort(
   debug?: boolean,
   configPath?: string,
   noBranding?: boolean,
+  queue?: boolean,
 ): Promise<RenderEntry> {
   return invoke<RenderEntry>("render_short", {
     inputClip,
@@ -34,6 +35,7 @@ export async function renderShort(
     debug: debug ?? null,
     configPath: configPath ?? null,
     noBranding: noBranding ?? null,
+    queue: queue ?? null,
   });
 }
 
@@ -52,6 +54,7 @@ export async function renderIteration(
   debug?: boolean,
   configPath?: string,
   noBranding?: boolean,
+  queue?: boolean,
 ): Promise<RenderEntry[]> {
   return invoke<RenderEntry[]>("render_iteration", {
     inputClip,
@@ -68,6 +71,7 @@ export async function renderIteration(
     debug: debug ?? null,
     configPath: configPath ?? null,
     noBranding: noBranding ?? null,
+    queue: queue ?? null,
   });
 }
 

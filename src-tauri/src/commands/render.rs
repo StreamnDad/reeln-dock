@@ -110,9 +110,11 @@ pub async fn render_short(
     debug: Option<bool>,
     config_path: Option<String>,
     no_branding: Option<bool>,
+    queue: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     let debug_flag = debug.unwrap_or(false);
     let no_branding_flag = no_branding.unwrap_or(false);
+    let queue_flag = queue.unwrap_or(false);
 
     // Try CLI first (full features), fall back to native backend
     let cli_path = {
@@ -178,6 +180,7 @@ pub async fn render_short(
                 debug: debug_flag,
                 no_branding: no_branding_flag,
                 output_path: None,
+                queue: queue_flag,
             };
             render_ops::render_via_cli(&params)
         })
@@ -283,9 +286,11 @@ pub async fn render_iteration(
     debug: Option<bool>,
     config_path: Option<String>,
     no_branding: Option<bool>,
+    queue: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     let debug_flag = debug.unwrap_or(false);
     let no_branding_flag = no_branding.unwrap_or(false);
+    let queue_flag = queue.unwrap_or(false);
 
     // Try CLI first — render each profile individually, then concat if needed.
     // We do NOT use --iterate (which delegates profile resolution to the CLI
@@ -372,6 +377,7 @@ pub async fn render_iteration(
                     debug: debug_flag,
                     no_branding: no_branding_flag,
                     output_path: Some(out_path.as_path()),
+                    queue: queue_flag,
                 };
                 let entries = render_ops::render_via_cli(&params)?;
                 all_entries.extend(entries);

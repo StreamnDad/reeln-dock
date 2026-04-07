@@ -1,53 +1,60 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { QueueItem } from "$lib/types/queue";
+import type { RenderStageItem, CliQueueItem, QueueViewItem } from "$lib/types/queue";
 import type { IterationItem, RenderOverrides } from "$lib/types/render";
 import { renderShort, renderIteration } from "$lib/ipc/render";
+import { queueList, queueListAll, queueEdit, queuePublish, queuePublishAll, queueRemove, queueTargets } from "$lib/ipc/queue";
 import { listConfigProfiles } from "$lib/ipc/plugins";
 import { log } from "$lib/stores/log.svelte";
 
-let queue = $state<QueueItem[]>([]);
-let initialized = false;
+// ---------------------------------------------------------------------------
+// Render Staging (dock-local, persisted to render-stage.json)
+// ---------------------------------------------------------------------------
+
+let stageItems = $state<RenderStageItem[]>([]);
+let stageInitialized = false;
 
 function generateId(): string {
   return crypto.randomUUID();
 }
 
-/** Persist queue to disk (fire-and-forget). */
-function persist(): void {
-  invoke("save_render_queue", { queueJson: JSON.stringify(queue) }).catch(
-    (e) => log.error("RenderQueue", `Failed to persist: ${e}`),
+/** Persist stage items to disk (fire-and-forget). */
+function persistStage(): void {
+  invoke("save_render_stage", { stageJson: JSON.stringify(stageItems) }).catch(
+    (e) => log.error("RenderQueue", `Failed to persist stage: ${e}`),
   );
 }
 
-/** Load queue from disk on first access. */
+/** Load stage from disk and CLI queue on first access. */
 export async function initQueue(): Promise<void> {
-  if (initialized) return;
-  initialized = true;
+  if (stageInitialized) return;
+  stageInitialized = true;
   try {
-    const json = await invoke<string>("load_render_queue");
-    const loaded: QueueItem[] = JSON.parse(json);
+    const json = await invoke<string>("load_render_stage");
+    const loaded: RenderStageItem[] = JSON.parse(json);
     // Reset any "rendering" items back to "pending" (interrupted by reload)
-    queue = loaded.map((q) =>
+    stageItems = loaded.map((q) =>
       q.status === "rendering" ? { ...q, status: "pending" as const } : q,
     );
   } catch {
-    queue = [];
+    stageItems = [];
   }
+  // Load CLI queue eagerly so badge count is accurate from startup
+  await refreshAllCliQueues();
 }
 
-export function getQueue(): QueueItem[] {
-  return queue;
+export function getStageItems(): RenderStageItem[] {
+  return stageItems;
 }
 
-export function getPendingCount(): number {
-  return queue.filter((q) => q.status === "pending").length;
+export function getPendingStageCount(): number {
+  return stageItems.filter((q) => q.status === "pending").length;
 }
 
-export function isClipInQueue(clipPath: string): boolean {
-  return queue.some((q) => q.clipPath === clipPath && q.status === "pending");
+export function isClipInStage(clipPath: string): boolean {
+  return stageItems.some((q) => q.clipPath === clipPath && q.status === "pending");
 }
 
-export function addToQueue(item: {
+export function addToStage(item: {
   gameDir: string;
   gameName: string;
   eventId: string;
@@ -65,8 +72,8 @@ export function addToQueue(item: {
   playerNumbers?: string;
   noBranding?: boolean;
 }): void {
-  queue = [
-    ...queue,
+  stageItems = [
+    ...stageItems,
     {
       ...item,
       id: generateId(),
@@ -74,28 +81,28 @@ export function addToQueue(item: {
       addedAt: Date.now(),
     },
   ];
-  persist();
+  persistStage();
 }
 
-export function removeFromQueue(id: string): void {
-  queue = queue.filter((q) => q.id !== id);
-  persist();
+export function removeFromStage(id: string): void {
+  stageItems = stageItems.filter((q) => q.id !== id);
+  persistStage();
 }
 
-export function clearCompleted(): void {
-  queue = queue.filter((q) => q.status !== "done" && q.status !== "error");
-  persist();
+export function clearStageErrors(): void {
+  stageItems = stageItems.filter((q) => q.status !== "error");
+  persistStage();
 }
 
-export function reorderQueue(fromIdx: number, toIdx: number): void {
-  const items = [...queue];
+export function reorderStage(fromIdx: number, toIdx: number): void {
+  const items = [...stageItems];
   const [moved] = items.splice(fromIdx, 1);
   items.splice(toIdx, 0, moved);
-  queue = items;
-  persist();
+  stageItems = items;
+  persistStage();
 }
 
-/** Resolve a plugin profile name (e.g. "google-test") to its config file path. */
+/** Resolve a plugin profile name to its config file path. */
 async function resolveProfilePath(profileName?: string): Promise<string | undefined> {
   if (!profileName) return undefined;
   try {
@@ -108,11 +115,12 @@ async function resolveProfilePath(profileName?: string): Promise<string | undefi
   }
 }
 
-async function renderItem(item: QueueItem): Promise<void> {
-  queue = queue.map((q) =>
+/** Render a single stage item with --queue flag so it lands in CLI queue. */
+async function renderStageItem(item: RenderStageItem): Promise<void> {
+  stageItems = stageItems.map((q) =>
     q.id === item.id ? { ...q, status: "rendering" as const } : q,
   );
-  persist();
+  persistStage();
 
   try {
     const outputDir = item.gameDir + "/renders";
@@ -123,7 +131,7 @@ async function renderItem(item: QueueItem): Promise<void> {
       const mergedOverrides = item.overrides
         ? { ...item.overrides, ...profile.overrides }
         : profile.overrides;
-      const entry = await renderShort(
+      await renderShort(
         item.clipPath,
         outputDir,
         profile.profile_name,
@@ -138,11 +146,7 @@ async function renderItem(item: QueueItem): Promise<void> {
         item.debug,
         configPath,
         item.noBranding,
-      );
-      queue = queue.map((q) =>
-        q.id === item.id
-          ? { ...q, status: "done" as const, results: [entry] }
-          : q,
+        true, // queue: true — add to CLI queue
       );
     } else {
       const items: IterationItem[] = item.profiles.map((p) => ({
@@ -151,7 +155,7 @@ async function renderItem(item: QueueItem): Promise<void> {
           ? { ...item.overrides, ...p.overrides }
           : p.overrides,
       }));
-      const entries = await renderIteration(
+      await renderIteration(
         item.clipPath,
         outputDir,
         items,
@@ -166,34 +170,197 @@ async function renderItem(item: QueueItem): Promise<void> {
         item.debug,
         configPath,
         item.noBranding,
-      );
-      queue = queue.map((q) =>
-        q.id === item.id
-          ? { ...q, status: "done" as const, results: entries }
-          : q,
+        true, // queue: true — add to CLI queue
       );
     }
-    log.info("RenderQueue", `Completed: ${item.clipName}`);
+
+    // Success: remove from staging (item is now in CLI queue)
+    stageItems = stageItems.filter((q) => q.id !== item.id);
+    log.info("RenderQueue", `Rendered and queued: ${item.clipName}`);
+
+    // Refresh CLI queue to pick up the new item
+    await refreshCliQueue(item.gameDir);
   } catch (err) {
-    queue = queue.map((q) =>
+    stageItems = stageItems.map((q) =>
       q.id === item.id
         ? { ...q, status: "error" as const, error: String(err) }
         : q,
     );
     log.error("RenderQueue", `Failed: ${item.clipName}: ${err}`);
   }
-  persist();
+  persistStage();
 }
 
 export async function renderSingle(id: string): Promise<void> {
-  const item = queue.find((q) => q.id === id);
+  const item = stageItems.find((q) => q.id === id);
   if (!item || item.status !== "pending") return;
-  await renderItem(item);
+  await renderStageItem(item);
 }
 
 export async function renderAll(): Promise<void> {
-  const pending = queue.filter((q) => q.status === "pending");
+  const pending = stageItems.filter((q) => q.status === "pending");
   for (const item of pending) {
-    await renderItem(item);
+    await renderStageItem(item);
   }
 }
+
+// ---------------------------------------------------------------------------
+// CLI Queue (read from per-game render_queue.json via IPC)
+// ---------------------------------------------------------------------------
+
+let cliItems = $state<CliQueueItem[]>([]);
+let cliLoading = $state(false);
+let publishTargets = $state<string[]>([]);
+
+export function getCliQueueItems(): CliQueueItem[] {
+  return cliItems;
+}
+
+export function isCliQueueLoading(): boolean {
+  return cliLoading;
+}
+
+export function getPublishTargets(): string[] {
+  return publishTargets;
+}
+
+/** Refresh CLI queue items for a specific game directory. */
+export async function refreshCliQueue(gameDir: string): Promise<void> {
+  cliLoading = true;
+  try {
+    const items = await queueList(gameDir);
+    // Merge: replace items for this gameDir, keep others
+    const otherItems = cliItems.filter((i) => i.game_dir !== gameDir);
+    cliItems = [...otherItems, ...items];
+  } catch (err) {
+    log.error("RenderQueue", `Failed to load CLI queue for ${gameDir}: ${err}`);
+  }
+  cliLoading = false;
+}
+
+/** Refresh CLI queue items across all games. */
+export async function refreshAllCliQueues(): Promise<void> {
+  cliLoading = true;
+  try {
+    cliItems = await queueListAll();
+  } catch (err) {
+    log.error("RenderQueue", `Failed to load all CLI queues: ${err}`);
+  }
+  cliLoading = false;
+}
+
+/** Refresh available publish targets from plugins. */
+export async function refreshPublishTargets(configPath?: string, profile?: string): Promise<void> {
+  try {
+    publishTargets = await queueTargets(configPath, profile);
+  } catch (err) {
+    log.error("RenderQueue", `Failed to load publish targets: ${err}`);
+    publishTargets = [];
+  }
+}
+
+/** Edit title/description of a CLI queue item. */
+export async function editCliItem(
+  gameDir: string,
+  itemId: string,
+  title?: string,
+  description?: string,
+): Promise<void> {
+  try {
+    const updated = await queueEdit(gameDir, itemId, title, description);
+    cliItems = cliItems.map((i) => (i.id === updated.id ? updated : i));
+  } catch (err) {
+    log.error("RenderQueue", `Failed to edit queue item: ${err}`);
+    throw err;
+  }
+}
+
+/** Publish a CLI queue item to target(s). */
+export async function publishCliItem(
+  gameDir: string,
+  itemId: string,
+  target?: string,
+  configPath?: string,
+): Promise<void> {
+  try {
+    const updated = await queuePublish(gameDir, itemId, target, configPath);
+    cliItems = cliItems.map((i) => (i.id === updated.id ? updated : i));
+  } catch (err) {
+    log.error("RenderQueue", `Failed to publish queue item: ${err}`);
+    throw err;
+  }
+}
+
+/** Publish all rendered items in a game's queue. */
+export async function publishAllCliItems(
+  gameDir: string,
+  configPath?: string,
+): Promise<void> {
+  try {
+    const updated = await queuePublishAll(gameDir, configPath);
+    // Replace all items for this game
+    const otherItems = cliItems.filter((i) => i.game_dir !== gameDir);
+    cliItems = [...otherItems, ...updated];
+  } catch (err) {
+    log.error("RenderQueue", `Failed to publish all: ${err}`);
+    throw err;
+  }
+}
+
+/** Soft-delete a CLI queue item. */
+export async function removeCliItem(
+  gameDir: string,
+  itemId: string,
+): Promise<void> {
+  try {
+    await queueRemove(gameDir, itemId);
+    // Remove from local state (it's now status "removed", hidden from list)
+    cliItems = cliItems.filter((i) => i.id !== itemId);
+  } catch (err) {
+    log.error("RenderQueue", `Failed to remove queue item: ${err}`);
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Unified view
+// ---------------------------------------------------------------------------
+
+/** Get all queue items for display: staging items first, then CLI items. */
+export function getQueueViewItems(): QueueViewItem[] {
+  const stageView: QueueViewItem[] = stageItems.map((item) => ({
+    kind: "stage" as const,
+    item,
+  }));
+  const cliView: QueueViewItem[] = cliItems.map((item) => ({
+    kind: "cli" as const,
+    item,
+  }));
+  return [...stageView, ...cliView];
+}
+
+/** Count of items needing attention (pending renders + unpublished CLI items). */
+export function getBadgeCount(): number {
+  const pendingStage = stageItems.filter((q) => q.status === "pending").length;
+  const unpublishedCli = cliItems.filter((q) => q.status === "rendered").length;
+  return pendingStage + unpublishedCli;
+}
+
+// ---------------------------------------------------------------------------
+// Backwards compatibility aliases
+// ---------------------------------------------------------------------------
+
+/** @deprecated Use getStageItems() instead */
+export const getQueue = getStageItems;
+/** @deprecated Use getPendingStageCount() instead */
+export const getPendingCount = getPendingStageCount;
+/** @deprecated Use isClipInStage() instead */
+export const isClipInQueue = isClipInStage;
+/** @deprecated Use addToStage() instead */
+export const addToQueue = addToStage;
+/** @deprecated Use removeFromStage() instead */
+export const removeFromQueue = removeFromStage;
+/** @deprecated Use clearStageErrors() instead */
+export const clearCompleted = clearStageErrors;
+/** @deprecated Use reorderStage() instead */
+export const reorderQueue = reorderStage;

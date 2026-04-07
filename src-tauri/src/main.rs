@@ -33,6 +33,7 @@ fn main() {
                 dock_settings: Mutex::new(dock_settings),
                 app_data_dir,
                 media_backend: Arc::new(LibavBackend::new()),
+                auth_child_pid: Arc::new(Mutex::new(None)),
             });
 
             Ok(())
@@ -47,8 +48,8 @@ fn main() {
             commands::config::save_render_profile,
             commands::config::delete_render_profile,
             commands::config::rename_render_profile,
-            commands::config::save_render_queue,
-            commands::config::load_render_queue,
+            commands::config::save_render_stage,
+            commands::config::load_render_stage,
             // Games (read)
             commands::games::list_games,
             commands::games::get_game_state,
@@ -107,11 +108,23 @@ fn main() {
             commands::plugins::get_version_info,
             commands::plugins::get_enforce_hooks,
             commands::plugins::set_enforce_hooks,
+            // Queue
+            commands::queue::queue_list,
+            commands::queue::queue_list_all,
+            commands::queue::queue_show,
+            commands::queue::queue_targets,
+            commands::queue::queue_edit,
+            commands::queue::queue_publish,
+            commands::queue::queue_publish_all,
+            commands::queue::queue_remove,
             // Hooks (plugin execution via CLI)
             commands::hooks::detect_reeln_cli,
             commands::hooks::get_cli_version,
             commands::hooks::install_plugin_via_cli,
             commands::hooks::execute_plugin_hook,
+            commands::hooks::check_plugin_auth,
+            commands::hooks::refresh_plugin_auth,
+            commands::hooks::cancel_plugin_auth,
             // Tournaments
             commands::tournaments::list_tournament_metadata,
             commands::tournaments::set_tournament_archived,

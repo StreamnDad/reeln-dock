@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getConfig } from "$lib/stores/config.svelte";
-  import { getPendingCount } from "$lib/stores/renderQueue.svelte";
+  import { getBadgeCount } from "$lib/stores/renderQueue.svelte";
   import type { View } from "$lib/stores/navigation";
 
   interface Props {
@@ -10,7 +10,7 @@
 
   let { currentView, setView }: Props = $props();
   let config = $derived(getConfig());
-  let pendingCount = $derived(getPendingCount());
+  let badgeCount = $derived(getBadgeCount());
 
   const tabs: { label: string; view: View }[] = [
     { label: "Games", view: "games" },
@@ -39,8 +39,8 @@
           onclick={() => setView(tab.view)}
         >
           {tab.label}
-          {#if tab.view === "queue" && pendingCount > 0}
-            <span class="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-secondary text-bg leading-none">{pendingCount}</span>
+          {#if tab.view === "queue" && badgeCount > 0}
+            <span class="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-secondary text-bg leading-none">{badgeCount}</span>
           {/if}
         </button>
       {/each}

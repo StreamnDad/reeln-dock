@@ -34,6 +34,8 @@ pub struct CliRenderParams<'a> {
     pub no_branding: bool,
     /// Explicit output file path — maps to `--output`. When None, CLI uses its default.
     pub output_path: Option<&'a Path>,
+    /// Add to render queue instead of immediate publish — maps to `--queue`.
+    pub queue: bool,
 }
 
 /// Render via the reeln CLI subprocess. Returns new RenderEntries added to game state.
@@ -171,6 +173,11 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
     // Branding: on by default (matches CLI default). Only disable when explicitly requested.
     if params.no_branding {
         cmd.arg("--no-branding");
+    }
+
+    // Queue: add to render queue instead of immediate publish
+    if params.queue {
+        cmd.arg("--queue");
     }
 
     // Execute
@@ -992,6 +999,7 @@ mod tests {
             player_numbers: None,
             no_branding: false,
             output_path: None,
+            queue: false,
         };
 
         let _ = render_via_cli(&params); // will error — we only care about args
@@ -1042,6 +1050,7 @@ mod tests {
             player_numbers: None,
             no_branding: false,
             output_path: None,
+            queue: false,
         };
 
         let _ = render_via_cli(&params);
@@ -1081,6 +1090,7 @@ mod tests {
             player_numbers: None,
             no_branding: false,
             output_path: None,
+            queue: false,
         };
 
         let _ = render_via_cli(&params);
@@ -1119,6 +1129,7 @@ mod tests {
             player_numbers: None,
             no_branding: false,
             output_path: Some(out.as_path()),
+            queue: false,
         };
 
         let _ = render_via_cli(&params);
@@ -1156,6 +1167,7 @@ mod tests {
             player_numbers: None,
             no_branding: false,
             output_path: None,
+            queue: false,
         };
 
         let _ = render_via_cli(&params);
@@ -1193,6 +1205,7 @@ mod tests {
             player_numbers: None,
             no_branding: false,
             output_path: None,
+            queue: false,
         };
 
         let _ = render_via_cli(&params);
@@ -1238,6 +1251,7 @@ mod tests {
             player_numbers: None,
             no_branding: false,
             output_path: None,
+            queue: false,
         };
 
         let _ = render_via_cli(&params);
@@ -1296,6 +1310,7 @@ mod tests {
             player_numbers: None,
             no_branding: false,
             output_path: None,
+            queue: false,
         };
 
         let _ = render_via_cli(&params);
@@ -1341,6 +1356,7 @@ mod tests {
             player_numbers: None,
             no_branding: false,
             output_path: None,
+            queue: false,
         };
 
         let _ = render_via_cli(&params);
@@ -1378,6 +1394,7 @@ mod tests {
             player_numbers: None,
             no_branding: false,
             output_path: None,
+            queue: false,
         };
 
         let _ = render_via_cli(&params);
@@ -1418,6 +1435,7 @@ mod tests {
             player_numbers: None,
             no_branding: false,
             output_path: None,
+            queue: false,
         };
 
         let _ = render_via_cli(&params);
@@ -1476,6 +1494,7 @@ mod tests {
             player_numbers: Some("48,3,58"),
             no_branding: true,
             output_path: None,
+            queue: false,
         };
 
         let _ = render_via_cli(&params);
