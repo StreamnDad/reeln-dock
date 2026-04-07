@@ -393,6 +393,7 @@ mod tests {
             }),
             app_data_dir: app_data_dir.to_path_buf(),
             media_backend: crate::test_utils::mock_backend(),
+            auth_child_pid: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -405,6 +406,7 @@ mod tests {
             dock_settings: std::sync::Mutex::new(DockSettings::default()),
             app_data_dir: dir.path().to_path_buf(),
             media_backend: crate::test_utils::mock_backend(),
+            auth_child_pid: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
         let result = read_raw_config(&state);
         assert!(result.is_err());
@@ -552,25 +554,34 @@ mod tests {
     }
 }
 
-/// Save render queue to disk (app data dir).
+/// Save render stage (pre-render items) to disk (app data dir).
 #[tauri::command]
-pub fn save_render_queue(
-    queue_json: String,
+pub fn save_render_stage(
+    stage_json: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let path = state.app_data_dir.join("render-queue.json");
-    std::fs::write(&path, &queue_json).map_err(|e| e.to_string())
+    let path = state.app_data_dir.join("render-stage.json");
+    std::fs::write(&path, &stage_json).map_err(|e| e.to_string())
 }
 
-/// Load render queue from disk (app data dir). Returns empty array if not found.
+/// Load render stage from disk (app data dir). Returns empty array if not found.
+/// Migrates from old render-queue.json if render-stage.json doesn't exist.
 #[tauri::command]
-pub fn load_render_queue(
+pub fn load_render_stage(
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    let path = state.app_data_dir.join("render-queue.json");
-    if path.is_file() {
-        std::fs::read_to_string(&path).map_err(|e| e.to_string())
-    } else {
-        Ok("[]".to_string())
+    let stage_path = state.app_data_dir.join("render-stage.json");
+    if stage_path.is_file() {
+        return std::fs::read_to_string(&stage_path).map_err(|e| e.to_string());
     }
+    // Migration: check for old render-queue.json
+    let old_path = state.app_data_dir.join("render-queue.json");
+    if old_path.is_file() {
+        let content = std::fs::read_to_string(&old_path).map_err(|e| e.to_string())?;
+        // Write to new location and remove old file
+        std::fs::write(&stage_path, &content).map_err(|e| e.to_string())?;
+        let _ = std::fs::remove_file(&old_path);
+        return Ok(content);
+    }
+    Ok("[]".to_string())
 }

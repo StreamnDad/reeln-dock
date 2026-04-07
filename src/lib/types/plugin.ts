@@ -49,3 +49,27 @@ export interface VersionInfo {
   app_version: string;
   config_version: number | null;
 }
+
+// ── Plugin Auth ─────────────────────────────────────────────────────
+
+export type AuthStatus = "ok" | "warn" | "fail" | "expired" | "not_configured";
+
+export interface AuthCheckResult {
+  service: string;
+  status: AuthStatus;
+  message: string;
+  identity?: string;
+  expires_at?: string;
+  scopes?: string[];
+  required_scopes?: string[];
+  hint?: string;
+}
+
+export interface PluginAuthReport {
+  plugin_name: string;
+  results: AuthCheckResult[];
+}
+
+export interface PluginAuthResponse {
+  plugins: PluginAuthReport[];
+}

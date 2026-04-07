@@ -11,11 +11,16 @@
     loadProfiles,
     loadRegistry,
     loadVersionInfo,
+    loadAuthStatus,
     getVersionInfo_,
+    getAuthResults,
+    getAuthMap,
     selectProfile,
     addPlugin,
     removePlugin,
     createProfile,
+    refreshAuth,
+    cancelAuth,
   } from "$lib/stores/plugins.svelte";
   import { getEnforceHooks, setEnforceHooks } from "$lib/ipc/plugins";
   import { isPluginInstalled, isCliAvailable } from "$lib/stores/cli.svelte";
@@ -29,6 +34,7 @@
   let regLoading = $derived(isRegistryLoading());
   let regError = $derived(getRegistryError());
   let version = $derived(getVersionInfo_());
+  let authMap = $derived(getAuthMap());
 
   // Enforce hooks toggle
   let enforceHooks = $state(true);
@@ -275,8 +281,11 @@
           status={up.status}
           detail={up.detail}
           registryInfo={up.registryInfo}
+          authResults={authMap.get(`${selectedPath}::${up.name}`) ?? []}
           onAdd={() => handleAddPlugin(up.name)}
           onRemove={() => handleRemovePlugin(up.name)}
+          onRefreshAuth={() => refreshAuth(up.name)}
+          onCancelAuth={() => cancelAuth()}
         />
       {/each}
     </div>

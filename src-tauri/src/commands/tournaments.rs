@@ -104,6 +104,7 @@ mod tests {
             dock_settings: Mutex::new(DockSettings::default()),
             app_data_dir: dir.path().to_path_buf(),
             media_backend: test_utils::mock_backend(),
+            auth_child_pid: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
         (state, output_dir)
     }
@@ -138,6 +139,7 @@ mod tests {
             dock_settings: Mutex::new(DockSettings::default()),
             app_data_dir: dir.path().to_path_buf(),
             media_backend: test_utils::mock_backend(),
+            auth_child_pid: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
         let result = tournaments_file(&state);
         assert!(result.is_err());
@@ -154,6 +156,7 @@ mod tests {
             dock_settings: Mutex::new(DockSettings::default()),
             app_data_dir: dir.path().to_path_buf(),
             media_backend: test_utils::mock_backend(),
+            auth_child_pid: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
         let result = tournaments_file(&state);
         assert!(result.is_err());

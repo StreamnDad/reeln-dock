@@ -19,6 +19,9 @@ import {
   installPluginViaCli,
   getEnforceHooks,
   setEnforceHooks,
+  checkPluginAuth,
+  refreshPluginAuth,
+  cancelPluginAuth,
 } from "./plugins";
 
 const mockInvoke = invoke as Mock;
@@ -153,5 +156,73 @@ describe("setEnforceHooks", () => {
       profilePath: "/config.json",
       enforce: false,
     });
+  });
+});
+
+describe("checkPluginAuth", () => {
+  it("invokes check_plugin_auth with no args for all plugins", async () => {
+    const reports = [{ plugin_name: "google", results: [] }];
+    mockInvoke.mockResolvedValue(reports);
+    const result = await checkPluginAuth();
+    expect(mockInvoke).toHaveBeenCalledWith("check_plugin_auth", {
+      pluginName: null,
+      configPath: null,
+    });
+    expect(result).toEqual(reports);
+  });
+
+  it("passes pluginName for single plugin check", async () => {
+    mockInvoke.mockResolvedValue([]);
+    await checkPluginAuth("google");
+    expect(mockInvoke).toHaveBeenCalledWith("check_plugin_auth", {
+      pluginName: "google",
+      configPath: null,
+    });
+  });
+
+  it("passes configPath when provided", async () => {
+    mockInvoke.mockResolvedValue([]);
+    await checkPluginAuth("meta", "/config/meta.json");
+    expect(mockInvoke).toHaveBeenCalledWith("check_plugin_auth", {
+      pluginName: "meta",
+      configPath: "/config/meta.json",
+    });
+  });
+});
+
+describe("refreshPluginAuth", () => {
+  it("passes pluginName to refresh", async () => {
+    const reports = [
+      {
+        plugin_name: "google",
+        results: [
+          { service: "YouTube", status: "ok", message: "Connected", identity: "StreamnDad" },
+        ],
+      },
+    ];
+    mockInvoke.mockResolvedValue(reports);
+    const result = await refreshPluginAuth("google");
+    expect(mockInvoke).toHaveBeenCalledWith("refresh_plugin_auth", {
+      pluginName: "google",
+      configPath: null,
+    });
+    expect(result).toEqual(reports);
+  });
+
+  it("passes configPath when provided", async () => {
+    mockInvoke.mockResolvedValue([]);
+    await refreshPluginAuth("meta", "/config/meta.json");
+    expect(mockInvoke).toHaveBeenCalledWith("refresh_plugin_auth", {
+      pluginName: "meta",
+      configPath: "/config/meta.json",
+    });
+  });
+});
+
+describe("cancelPluginAuth", () => {
+  it("invokes cancel_plugin_auth", async () => {
+    mockInvoke.mockResolvedValue(undefined);
+    await cancelPluginAuth();
+    expect(mockInvoke).toHaveBeenCalledWith("cancel_plugin_auth");
   });
 });

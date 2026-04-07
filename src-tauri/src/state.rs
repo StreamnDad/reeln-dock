@@ -129,6 +129,8 @@ pub struct AppState {
     pub app_data_dir: PathBuf,
     /// Native media backend (LibavBackend) — stateless, Send + Sync.
     pub media_backend: Arc<dyn MediaBackend>,
+    /// PID of an in-progress auth subprocess (for cancel support).
+    pub auth_child_pid: Arc<Mutex<Option<u32>>>,
 }
 
 impl AppState {
@@ -249,6 +251,7 @@ mod tests {
             dock_settings: Mutex::new(settings),
             app_data_dir: dir.path().to_path_buf(),
             media_backend: test_utils::mock_backend(),
+            auth_child_pid: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
 
         assert_eq!(state.effective_config_dir(), config_dir);
@@ -265,6 +268,7 @@ mod tests {
             dock_settings: Mutex::new(settings),
             app_data_dir: dir.path().to_path_buf(),
             media_backend: test_utils::mock_backend(),
+            auth_child_pid: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
 
         // Without a config path set, should fall back to reeln_config::config_dir()
