@@ -23,7 +23,7 @@
   import { loadAllTeams } from "$lib/stores/teams.svelte";
   import { settingsTeamTarget, settingsTournamentTarget, editingQueueItem } from "$lib/stores/navigation";
   import { log } from "$lib/stores/log.svelte";
-  import { gameStatus, getTournamentGroups, type GameStatus } from "$lib/stores/games";
+  import { gameStatus, getTournamentGroups, type GameStatus, type GameSortOrder } from "$lib/stores/games";
   import { getTournamentMetadata } from "$lib/stores/tournaments.svelte";
   import type { View } from "$lib/stores/navigation";
   import { useStore } from "$lib/stores/bridge.svelte";
@@ -51,6 +51,7 @@
   let search = $state("");
   let showNewGame = $state(false);
   let showEnded = $state(false);
+  let gameSortOrder = $state<GameSortOrder>("date-desc");
 
   // Teams data
   let teamLevels = $state<string[]>([]);
@@ -168,7 +169,7 @@
       {@const statusCounts = (() => { const c = { all: gamesData.length, new: 0, active: 0, done: 0 }; for (const g of gamesData) { const s = gameStatus(g); if (s in c) c[s]++; } return c; })()}
       {@const tournamentMeta = getTournamentMetadata()}
       {@const archivedNames = new Set(tournamentMeta.filter(m => isArchived(m.name)).map(m => m.name))}
-      {@const groups = getTournamentGroups(gamesData, levelFilter, statusFilter, archivedNames, showEnded)}
+      {@const groups = getTournamentGroups(gamesData, levelFilter, statusFilter, archivedNames, showEnded, gameSortOrder)}
       {@const filteredGroups = groups.map(g => ({ ...g, games: g.games.filter(game => { if (!search) return true; const q = search.toLowerCase(); const info = game.state.game_info; return info.home_team.toLowerCase().includes(q) || info.away_team.toLowerCase().includes(q) || info.date.includes(q) || info.tournament.toLowerCase().includes(q); })})).filter(g => g.games.length > 0)}
       {@const allTournamentNames = [...new Set(gamesData.map(g => g.state.game_info.tournament).filter(Boolean))].sort()}
       <div class="w-72 shrink-0 overflow-y-auto border-r border-border bg-surface flex flex-col">
@@ -220,9 +221,14 @@
             <button class="w-full px-3 py-1.5 bg-primary hover:bg-primary-light text-text rounded-lg text-sm font-medium transition-colors" onclick={() => showNewGame = true}>+ New Game</button>
           </div>
 
-          <!-- Search -->
-          <div class="px-3 pt-1.5 pb-1.5">
-            <input type="text" bind:value={search} placeholder="Search games..." class="w-full px-3 py-1.5 bg-bg border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-secondary" />
+          <!-- Search + Sort -->
+          <div class="px-3 pt-1.5 pb-1.5 flex gap-1.5">
+            <input type="text" bind:value={search} placeholder="Search games..." class="flex-1 px-3 py-1.5 bg-bg border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-secondary" />
+            <button
+              class="px-2 py-1.5 bg-bg border border-border rounded-lg text-xs text-text-muted hover:text-text transition-colors shrink-0"
+              title={gameSortOrder === "date-desc" ? "Newest first — click for oldest first" : "Oldest first — click for newest first"}
+              onclick={() => gameSortOrder = gameSortOrder === "date-desc" ? "date-asc" : "date-desc"}
+            >{gameSortOrder === "date-desc" ? "New" : "Old"}</button>
           </div>
 
           <!-- Game tree -->
@@ -392,7 +398,7 @@
         {:else}
           {@const tournamentMeta2 = getTournamentMetadata()}
           {@const archivedNames2 = new Set(tournamentMeta2.filter(m => isArchived(m.name)).map(m => m.name))}
-          {@const contentGroups = getTournamentGroups(gamesData, levelFilter, statusFilter, archivedNames2, showEnded)}
+          {@const contentGroups = getTournamentGroups(gamesData, levelFilter, statusFilter, archivedNames2, showEnded, gameSortOrder)}
           {#each contentGroups as group}
             <div class="mb-6">
               <h3 class="text-sm font-semibold uppercase tracking-wider text-text-muted mb-3">{group.tournament} <span class="text-xs ml-1">{group.games.length} game{group.games.length !== 1 ? "s" : ""}</span></h3>

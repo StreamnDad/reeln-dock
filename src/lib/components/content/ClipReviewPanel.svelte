@@ -284,14 +284,28 @@
     }
   }
 
-  // Keyboard: media keys + escape
+  // Keyboard: arrow keys, spacebar, media keys, escape
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "MediaTrackNext") {
+    // Skip when user is typing in an input/textarea
+    const tag = (e.target as HTMLElement)?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+    if (e.key === "ArrowRight" || e.key === "MediaTrackNext") {
       e.preventDefault();
       onNext?.();
-    } else if (e.key === "MediaTrackPrevious") {
+    } else if (e.key === "ArrowLeft" || e.key === "MediaTrackPrevious") {
       e.preventDefault();
       onPrev?.();
+    } else if (e.key === " ") {
+      e.preventDefault();
+      const video = document.querySelector("video");
+      if (video) {
+        if (video.paused) {
+          video.play().catch(() => {});
+        } else {
+          video.pause();
+        }
+      }
     } else if (e.key === "Escape" && expanded) {
       e.preventDefault();
       onToggleExpand?.();
