@@ -111,7 +111,7 @@
     <div>
       <span class="block text-[10px] text-text-muted mb-1">Source</span>
       <div class="rounded overflow-hidden border border-border">
-        <VideoPlayer src={sourceVideoSrc} />
+        <VideoPlayer src={sourceVideoSrc} originalPath={sampleClip} />
       </div>
     </div>
   {/if}

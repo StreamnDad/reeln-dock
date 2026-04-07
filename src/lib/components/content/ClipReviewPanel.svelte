@@ -502,6 +502,7 @@
         {#key event.id}
           <VideoPlayer
             src={videoSrc}
+            originalPath={fullClipPath}
             autoplay={autoPlay}
             onended={handleVideoEnded}
             onerror={() => { videoError = true; }}

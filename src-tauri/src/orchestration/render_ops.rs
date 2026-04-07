@@ -932,6 +932,122 @@ pub fn list_render_profiles(config: &AppConfig) -> Vec<RenderProfile> {
         .collect()
 }
 
+// ── Preview proxy ──────────────────────────────────────────────────
+
+/// File extensions that HTML5 `<video>` can play natively.
+const WEB_PLAYABLE_EXTENSIONS: &[&str] = &["mp4", "mov", "webm"];
+
+/// Generate an MP4 proxy for non-web video formats (MKV, AVI, TS, FLV).
+///
+/// Returns the original path unchanged if the file is already web-playable.
+/// Uses remux (stream copy) when the source has H.264 video, or falls back
+/// to full transcode with ultrafast/CRF 28 settings.
+///
+/// Proxy files are cached in `proxy_dir` by a hash of the source path.
+pub fn prepare_preview_proxy(
+    backend: &Arc<dyn MediaBackend>,
+    input_clip: &Path,
+    proxy_dir: &Path,
+) -> Result<PathBuf, String> {
+    // 1. Already web-playable? Return as-is.
+    let ext = input_clip
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if WEB_PLAYABLE_EXTENSIONS.contains(&ext.as_str()) {
+        return Ok(input_clip.to_path_buf());
+    }
+
+    // 2. Compute deterministic proxy path from source path hash.
+    let stem = input_clip
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("clip");
+    let path_hash = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        input_clip.to_string_lossy().as_ref().hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    };
+    let proxy_path = proxy_dir.join(format!("{path_hash}_{stem}.mp4"));
+
+    // 3. Cache hit — proxy already exists and is non-empty.
+    if proxy_path.is_file() {
+        if let Ok(meta) = std::fs::metadata(&proxy_path) {
+            if meta.len() > 0 {
+                return Ok(proxy_path);
+            }
+        }
+    }
+
+    // 4. Ensure proxy directory exists.
+    std::fs::create_dir_all(proxy_dir).map_err(|e| e.to_string())?;
+
+    // 5. Probe source to determine codec.
+    let info = backend.probe(input_clip).map_err(|e| e.to_string())?;
+    let codec = info.codec.as_deref().unwrap_or("");
+
+    // 6. Try remux (stream copy) for H.264 sources — near-instant.
+    if codec == "h264" {
+        let opts = ConcatOptions {
+            copy: true,
+            video_codec: String::new(),
+            crf: 0,
+            audio_codec: String::new(),
+            audio_rate: 0,
+        };
+        let remux_result = backend.concat(&[input_clip], &proxy_path, &opts);
+        if remux_result.is_ok() {
+            return Ok(proxy_path);
+        }
+        // Remux failed (e.g., incompatible audio codec) — clean up partial file
+        let _ = std::fs::remove_file(&proxy_path);
+    }
+
+    // 7. Full transcode — preserves original resolution.
+    let plan = RenderPlan {
+        input: input_clip.to_path_buf(),
+        output: proxy_path.clone(),
+        video_codec: "libx264".to_string(),
+        crf: 28,
+        preset: Some("ultrafast".to_string()),
+        audio_codec: "aac".to_string(),
+        audio_bitrate: Some(96),
+        filters: vec![],
+        filter_complex: None,
+        audio_filter: None,
+    };
+
+    backend.render(&plan).map_err(|e| e.to_string())?;
+
+    Ok(proxy_path)
+}
+
+/// Remove proxy files older than `max_age` from the proxy cache directory.
+pub fn cleanup_proxy_cache(proxy_dir: &Path, max_age: std::time::Duration) {
+    let entries = match std::fs::read_dir(proxy_dir) {
+        Ok(e) => e,
+        Err(_) => return, // Directory doesn't exist yet — nothing to clean
+    };
+
+    let cutoff = std::time::SystemTime::now() - max_age;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if let Ok(meta) = path.metadata() {
+            if let Ok(modified) = meta.modified() {
+                if modified < cutoff {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2407,5 +2523,177 @@ mod tests {
 
         let result = render_profile_preview(&backend, &input, &out_dir, None, &profile, None);
         assert!(result.is_ok());
+    }
+
+    // ── prepare_preview_proxy ─────────────────────────────────────
+
+    #[test]
+    fn test_proxy_mp4_passthrough() {
+        let backend = crate::test_utils::mock_backend();
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, b"fake_mp4").unwrap();
+
+        let result = prepare_preview_proxy(&backend, &input, &dir.path().join("proxies"));
+        assert_eq!(result.unwrap(), input);
+    }
+
+    #[test]
+    fn test_proxy_mov_passthrough() {
+        let backend = crate::test_utils::mock_backend();
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mov");
+        std::fs::write(&input, b"fake_mov").unwrap();
+
+        let result = prepare_preview_proxy(&backend, &input, &dir.path().join("proxies"));
+        assert_eq!(result.unwrap(), input);
+    }
+
+    #[test]
+    fn test_proxy_webm_passthrough() {
+        let backend = crate::test_utils::mock_backend();
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.webm");
+        std::fs::write(&input, b"fake_webm").unwrap();
+
+        let result = prepare_preview_proxy(&backend, &input, &dir.path().join("proxies"));
+        assert_eq!(result.unwrap(), input);
+    }
+
+    #[test]
+    fn test_proxy_mkv_generates_mp4() {
+        let backend = crate::test_utils::mock_backend();
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mkv");
+        std::fs::write(&input, b"fake_mkv").unwrap();
+        let proxy_dir = dir.path().join("proxies");
+
+        let result = prepare_preview_proxy(&backend, &input, &proxy_dir).unwrap();
+
+        assert!(result.to_string_lossy().ends_with(".mp4"));
+        assert!(result.is_file());
+        assert_ne!(result, input);
+        // Should be in proxy dir
+        assert!(result.starts_with(&proxy_dir));
+    }
+
+    #[test]
+    fn test_proxy_avi_generates_mp4() {
+        let backend = crate::test_utils::mock_backend();
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.avi");
+        std::fs::write(&input, b"fake_avi").unwrap();
+
+        let result = prepare_preview_proxy(&backend, &input, &dir.path().join("proxies")).unwrap();
+        assert!(result.to_string_lossy().ends_with(".mp4"));
+        assert!(result.is_file());
+    }
+
+    #[test]
+    fn test_proxy_ts_generates_mp4() {
+        let backend = crate::test_utils::mock_backend();
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.ts");
+        std::fs::write(&input, b"fake_ts").unwrap();
+
+        let result = prepare_preview_proxy(&backend, &input, &dir.path().join("proxies")).unwrap();
+        assert!(result.to_string_lossy().ends_with(".mp4"));
+    }
+
+    #[test]
+    fn test_proxy_cache_hit() {
+        let backend = crate::test_utils::mock_backend();
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mkv");
+        std::fs::write(&input, b"fake_mkv").unwrap();
+        let proxy_dir = dir.path().join("proxies");
+
+        // First call generates proxy
+        let first = prepare_preview_proxy(&backend, &input, &proxy_dir).unwrap();
+        let content_before = std::fs::read(&first).unwrap();
+
+        // Second call returns cached proxy (file untouched)
+        let second = prepare_preview_proxy(&backend, &input, &proxy_dir).unwrap();
+        let content_after = std::fs::read(&second).unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(content_before, content_after);
+    }
+
+    #[test]
+    fn test_proxy_creates_proxy_dir() {
+        let backend = crate::test_utils::mock_backend();
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mkv");
+        std::fs::write(&input, b"fake_mkv").unwrap();
+        let proxy_dir = dir.path().join("deep").join("nested").join("proxies");
+
+        assert!(!proxy_dir.exists());
+        let result = prepare_preview_proxy(&backend, &input, &proxy_dir);
+        assert!(result.is_ok());
+        assert!(proxy_dir.exists());
+    }
+
+    #[test]
+    fn test_proxy_deterministic_naming() {
+        let backend = crate::test_utils::mock_backend();
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.mkv");
+        std::fs::write(&input, b"fake_mkv").unwrap();
+        let proxy_dir = dir.path().join("proxies");
+
+        let first = prepare_preview_proxy(&backend, &input, &proxy_dir).unwrap();
+        let second = prepare_preview_proxy(&backend, &input, &proxy_dir).unwrap();
+        assert_eq!(first, second);
+        // Name includes stem
+        assert!(first.file_name().unwrap().to_string_lossy().contains("clip"));
+    }
+
+    #[test]
+    fn test_proxy_case_insensitive_extension() {
+        let backend = crate::test_utils::mock_backend();
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("clip.MP4");
+        std::fs::write(&input, b"fake_mp4").unwrap();
+
+        let result = prepare_preview_proxy(&backend, &input, &dir.path().join("proxies")).unwrap();
+        // .MP4 should be treated as web-playable
+        assert_eq!(result, input);
+    }
+
+    // ── cleanup_proxy_cache ───────────────────────────────────────
+
+    #[test]
+    fn test_cleanup_proxy_cache_removes_old_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let proxy_dir = dir.path().join("proxies");
+        std::fs::create_dir_all(&proxy_dir).unwrap();
+
+        let old_file = proxy_dir.join("old_clip.mp4");
+        std::fs::write(&old_file, b"old").unwrap();
+        // Set modification time to 30 days ago
+        let thirty_days_ago = std::time::SystemTime::now()
+            - std::time::Duration::from_secs(30 * 24 * 60 * 60);
+        filetime::set_file_mtime(
+            &old_file,
+            filetime::FileTime::from_system_time(thirty_days_ago),
+        ).unwrap();
+
+        let new_file = proxy_dir.join("new_clip.mp4");
+        std::fs::write(&new_file, b"new").unwrap();
+
+        cleanup_proxy_cache(&proxy_dir, std::time::Duration::from_secs(7 * 24 * 60 * 60));
+
+        assert!(!old_file.exists());
+        assert!(new_file.exists());
+    }
+
+    #[test]
+    fn test_cleanup_proxy_cache_no_dir() {
+        // Should not panic when directory doesn't exist
+        cleanup_proxy_cache(
+            Path::new("/nonexistent/proxy/dir"),
+            std::time::Duration::from_secs(1),
+        );
     }
 }

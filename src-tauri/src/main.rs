@@ -27,6 +27,13 @@ fn main() {
 
             let dock_settings = DockSettings::load(&app_data_dir).unwrap_or_default();
 
+            // Clean up old proxy cache files (>7 days)
+            let proxy_dir = app_data_dir.join("proxies");
+            orchestration::render_ops::cleanup_proxy_cache(
+                &proxy_dir,
+                std::time::Duration::from_secs(7 * 24 * 60 * 60),
+            );
+
             app.manage(AppState {
                 config: Mutex::new(None),
                 sport_registry: Mutex::new(SportRegistry::default()),
@@ -71,6 +78,9 @@ fn main() {
             commands::media::open_in_finder,
             commands::media::open_file,
             commands::media::file_exists,
+            commands::media::prepare_preview_proxy,
+            commands::media::get_proxy_cache_stats,
+            commands::media::clear_proxy_cache,
             // Render
             commands::render::render_short,
             commands::render::render_iteration,

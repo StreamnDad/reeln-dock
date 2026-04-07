@@ -15,6 +15,8 @@
   import { settingsTeamTarget, settingsTournamentTarget } from "$lib/stores/navigation";
   import { useStore } from "$lib/stores/bridge.svelte";
   import { getCliStatus, refreshCliStatus } from "$lib/stores/cli.svelte";
+  import { getProxyCacheStats, clearProxyCache } from "$lib/ipc/media";
+  import type { ProxyCacheStats } from "$lib/ipc/media";
 
   let config = $derived(getConfig());
   let dockSettings = $derived(getDockSettings());
@@ -114,6 +116,35 @@
   let saving = $state(false);
   let message = $state("");
   let showLogos = $state(true);
+
+  // Proxy cache
+  let cacheStats = $state<ProxyCacheStats | null>(null);
+  let cacheClearing = $state(false);
+
+  async function loadCacheStats() {
+    try {
+      cacheStats = await getProxyCacheStats();
+    } catch {
+      cacheStats = null;
+    }
+  }
+
+  function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
+
+  async function handleClearCache() {
+    cacheClearing = true;
+    try {
+      await clearProxyCache();
+      await loadCacheStats();
+    } finally {
+      cacheClearing = false;
+    }
+  }
 
   $effect(() => {
     showLogos = dockSettings.display?.show_logos ?? true;
@@ -323,6 +354,36 @@
         </div>
       </div>
       {/if}
+
+      <!-- Preview Cache -->
+      {#await loadCacheStats() then}
+      <div class="border-t border-border pt-4">
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">Preview Cache</h3>
+        <p class="text-xs text-text-muted mb-2">
+          Video proxies are generated for MKV and other non-web formats to enable in-app preview.
+          Old proxies are automatically cleaned up after 7 days.
+        </p>
+        {#if cacheStats}
+          <div class="flex items-center gap-4">
+            <span class="text-sm">
+              {cacheStats.file_count} {cacheStats.file_count === 1 ? "file" : "files"}
+              <span class="text-text-muted">({formatBytes(cacheStats.total_bytes)})</span>
+            </span>
+            {#if cacheStats.file_count > 0}
+              <button
+                class="px-2.5 py-1 text-xs font-medium border border-border text-text-muted hover:text-accent hover:border-accent/50 rounded transition-colors disabled:opacity-50"
+                disabled={cacheClearing}
+                onclick={handleClearCache}
+              >
+                {cacheClearing ? "Clearing..." : "Clear Cache"}
+              </button>
+            {/if}
+          </div>
+        {:else}
+          <span class="text-sm text-text-muted">No cache data</span>
+        {/if}
+      </div>
+      {/await}
     </div>
 
   {:else if activeTab === "event-types"}

@@ -6,7 +6,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import { invoke } from "@tauri-apps/api/core";
-import { probeClip, openInFinder, openFile, fileExists } from "./media";
+import { probeClip, openInFinder, openFile, fileExists, preparePreviewProxy } from "./media";
 
 const mockInvoke = invoke as Mock;
 
@@ -66,5 +66,22 @@ describe("fileExists", () => {
     mockInvoke.mockResolvedValue(false);
     const result = await fileExists("/nonexistent.mp4");
     expect(result).toBe(false);
+  });
+});
+
+describe("preparePreviewProxy", () => {
+  it("passes path and returns playable path", async () => {
+    mockInvoke.mockResolvedValue("/app/proxies/abc123_clip.mp4");
+    const result = await preparePreviewProxy("/games/clip.mkv");
+    expect(mockInvoke).toHaveBeenCalledWith("prepare_preview_proxy", {
+      path: "/games/clip.mkv",
+    });
+    expect(result).toBe("/app/proxies/abc123_clip.mp4");
+  });
+
+  it("returns original path for web-playable formats", async () => {
+    mockInvoke.mockResolvedValue("/games/clip.mp4");
+    const result = await preparePreviewProxy("/games/clip.mp4");
+    expect(result).toBe("/games/clip.mp4");
   });
 });

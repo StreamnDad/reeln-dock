@@ -1,6 +1,10 @@
 use std::path::Path;
 
+use tauri::State;
+
 use crate::models::MediaInfoResponse;
+use crate::orchestration::render_ops;
+use crate::state::AppState;
 
 #[tauri::command]
 pub fn probe_clip(path: String) -> Result<MediaInfoResponse, String> {
@@ -78,6 +82,71 @@ pub fn open_file(path: String) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Generate an MP4 proxy for non-web video formats (MKV, AVI, TS, FLV).
+/// Returns the original path if already web-playable, or the cached/new proxy path.
+#[tauri::command]
+pub async fn prepare_preview_proxy(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<String, String> {
+    let backend = state.media_backend.clone();
+    let proxy_dir = state.app_data_dir.join("proxies");
+    let input = std::path::PathBuf::from(&path);
+
+    tokio::task::spawn_blocking(move || {
+        let result = render_ops::prepare_preview_proxy(&backend, &input, &proxy_dir)?;
+        Ok(result.display().to_string())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
+/// Get proxy cache stats: total size and file count.
+#[derive(serde::Serialize)]
+pub struct ProxyCacheStats {
+    pub file_count: u32,
+    pub total_bytes: u64,
+}
+
+#[tauri::command]
+pub fn get_proxy_cache_stats(state: State<'_, AppState>) -> ProxyCacheStats {
+    let proxy_dir = state.app_data_dir.join("proxies");
+    let mut file_count = 0u32;
+    let mut total_bytes = 0u64;
+
+    if let Ok(entries) = std::fs::read_dir(&proxy_dir) {
+        for entry in entries.flatten() {
+            if let Ok(meta) = entry.metadata() {
+                if meta.is_file() {
+                    file_count += 1;
+                    total_bytes += meta.len();
+                }
+            }
+        }
+    }
+
+    ProxyCacheStats { file_count, total_bytes }
+}
+
+/// Clear all proxy cache files.
+#[tauri::command]
+pub fn clear_proxy_cache(state: State<'_, AppState>) -> Result<u32, String> {
+    let proxy_dir = state.app_data_dir.join("proxies");
+    let mut removed = 0u32;
+
+    if let Ok(entries) = std::fs::read_dir(&proxy_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                let _ = std::fs::remove_file(&path);
+                removed += 1;
+            }
+        }
+    }
+
+    Ok(removed)
 }
 
 #[tauri::command]

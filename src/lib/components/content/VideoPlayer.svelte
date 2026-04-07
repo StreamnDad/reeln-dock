@@ -1,6 +1,13 @@
 <script lang="ts">
+  import { convertFileSrc } from "@tauri-apps/api/core";
+  import { preparePreviewProxy } from "$lib/ipc/media";
+
+  const WEB_PLAYABLE = new Set(["mp4", "mov", "webm"]);
+
   interface Props {
     src: string;
+    /** Raw filesystem path (before convertFileSrc). When set, triggers proxy generation for non-web formats. */
+    originalPath?: string;
     autoplay?: boolean;
     class?: string;
     onended?: () => void;
@@ -10,6 +17,7 @@
 
   let {
     src,
+    originalPath,
     autoplay = false,
     class: className = "",
     onended,
@@ -22,8 +30,39 @@
   let duration = $state(0);
   let hovered = $state(false);
   let seeking = $state(false);
+  let proxyLoading = $state(false);
+  let proxySrc = $state<string | null>(null);
+  let proxyError = $state<string | null>(null);
 
   let progress = $derived(duration > 0 ? currentTime / duration : 0);
+
+  /** Effective video src — uses proxy when available. */
+  let effectiveSrc = $derived(proxySrc ?? src);
+
+  function needsProxy(path: string | undefined): boolean {
+    if (!path) return false;
+    const ext = path.split(".").pop()?.toLowerCase() ?? "";
+    return ext !== "" && !WEB_PLAYABLE.has(ext);
+  }
+
+  $effect(() => {
+    // Reset proxy state when source changes
+    proxySrc = null;
+    proxyError = null;
+
+    if (!needsProxy(originalPath)) return;
+
+    proxyLoading = true;
+    preparePreviewProxy(originalPath!)
+      .then((playablePath) => {
+        proxySrc = convertFileSrc(playablePath);
+        proxyLoading = false;
+      })
+      .catch((err) => {
+        proxyError = String(err);
+        proxyLoading = false;
+      });
+  });
 
   function togglePlay() {
     if (!videoEl) return;
@@ -80,20 +119,33 @@
   onclick={togglePlay}
   onkeydown={(e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); togglePlay(); } }}
 >
-  <!-- svelte-ignore a11y_media_has_caption -->
-  <video
-    bind:this={videoEl}
-    {src}
-    autoplay={autoplay}
-    playsinline
-    preload="metadata"
-    class="block w-full"
-    ontimeupdate={handleTimeUpdate}
-    onloadedmetadata={handleLoadedMetadata}
-    onended={() => { onended?.(); }}
-    onerror={() => onerror?.()}
-    onloadeddata={() => onloadeddata?.()}
-  ></video>
+  {#if proxyLoading}
+    <div class="flex items-center justify-center bg-bg/80 aspect-video w-full">
+      <div class="text-center text-text-muted">
+        <div class="w-6 h-6 border-2 border-secondary border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
+        <p class="text-xs">Preparing preview...</p>
+      </div>
+    </div>
+  {:else if proxyError}
+    <div class="flex items-center justify-center bg-bg/80 aspect-video w-full">
+      <p class="text-xs text-accent text-center px-4">Could not prepare preview: {proxyError}</p>
+    </div>
+  {:else}
+    <!-- svelte-ignore a11y_media_has_caption -->
+    <video
+      bind:this={videoEl}
+      src={effectiveSrc}
+      autoplay={autoplay}
+      playsinline
+      preload="metadata"
+      class="block w-full"
+      ontimeupdate={handleTimeUpdate}
+      onloadedmetadata={handleLoadedMetadata}
+      onended={() => { onended?.(); }}
+      onerror={() => onerror?.()}
+      onloadeddata={() => onloadeddata?.()}
+    ></video>
+  {/if}
 
   <!-- Thin progress bar at bottom -->
   <div
