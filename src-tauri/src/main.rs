@@ -71,10 +71,15 @@ fn main() {
             commands::games::merge_highlights,
             commands::games::finish_game,
             commands::games::prune_renders,
+            commands::games::prune_game_preview,
+            commands::games::prune_game_execute,
+            commands::games::delete_game_preview,
+            commands::games::delete_game,
             // Sports
             commands::sports::list_sports,
             // Media
             commands::media::probe_clip,
+            commands::media::get_platform,
             commands::media::open_in_finder,
             commands::media::open_file,
             commands::media::file_exists,

@@ -18,14 +18,33 @@ fn teams_base_dir(state: &AppState) -> PathBuf {
     state.effective_config_dir().join("teams")
 }
 
-/// Slugify a team name to a filesystem-safe string (matches Python CLI).
-fn slugify(name: &str) -> String {
+/// Slugify a team name to a filesystem-safe string.
+///
+/// Matches the Python CLI's `reeln.core.teams.slugify`:
+///
+/// ```python
+/// re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+/// ```
+///
+/// Runs of non-alphanumeric characters collapse into a single `_`, and any
+/// leading/trailing underscores are trimmed. Only ASCII alphanumerics are
+/// preserved — every other character (including Unicode letters) collapses
+/// into a separator, mirroring Python's `[^a-z0-9]+` regex semantics on
+/// lowercased input.
+pub(crate) fn slugify(name: &str) -> String {
     let lower = name.to_lowercase();
-    let slug: String = lower
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '_' })
-        .collect();
-    slug.trim_matches('_').to_string()
+    let mut out = String::with_capacity(lower.len());
+    let mut in_sep = false;
+    for c in lower.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+            in_sep = false;
+        } else if !in_sep {
+            out.push('_');
+            in_sep = true;
+        }
+    }
+    out.trim_matches('_').to_string()
 }
 
 #[tauri::command]
@@ -331,7 +350,22 @@ mod tests {
 
     #[test]
     fn slugify_multiple_spaces() {
-        assert_eq!(slugify("A  B  C"), "a__b__c");
+        // Runs of separators collapse into a single underscore, matching
+        // the Python CLI's `re.sub(r"[^a-z0-9]+", "_", ...)` behavior.
+        assert_eq!(slugify("A  B  C"), "a_b_c");
+    }
+
+    #[test]
+    fn slugify_mixed_separators_collapse() {
+        // Hyphens, spaces, and other punctuation all collapse together.
+        assert_eq!(slugify("Foo - Bar / Baz"), "foo_bar_baz");
+    }
+
+    #[test]
+    fn slugify_machine_orange_matches_cli() {
+        // Regression: dock-created games must produce the same slug the
+        // CLI uses when loading team profiles (`machine_orange.json`).
+        assert_eq!(slugify("Machine Orange"), "machine_orange");
     }
 
     // ── teams_base_dir ──────────────────────────────────────────────

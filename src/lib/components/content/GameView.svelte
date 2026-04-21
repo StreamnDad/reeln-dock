@@ -1,14 +1,20 @@
 <script lang="ts">
   import type { GameSummary, GameEvent, RenderEntry } from "$lib/types/game";
   import type { EventTypeEntry } from "$lib/types/config";
-  import { updateGameEvent, bulkUpdateEventType, getEventTypes, processSegment, mergeHighlights, finishGame, pruneRenders } from "$lib/ipc/games";
+  import { updateGameEvent, bulkUpdateEventType, getEventTypes, processSegment, mergeHighlights, finishGame, pruneRenders, executePluginHook } from "$lib/ipc/games";
   import { log } from "$lib/stores/log.svelte";
+  import { lookupTeam } from "$lib/stores/teams.svelte";
+  import { getDockSettings } from "$lib/stores/config.svelte";
   import * as uiPrefs from "$lib/stores/uiPrefs.svelte";
   import RenderPlaybackModal from "./RenderPlaybackModal.svelte";
+  import PrunePreviewModal from "./PrunePreviewModal.svelte";
+  import DeleteGameModal from "./DeleteGameModal.svelte";
 
   // Action state
   let actionLoading = $state<string | null>(null);
   let actionError = $state("");
+  let showPruneModal = $state(false);
+  let showDeleteModal = $state(false);
 
   interface Props {
     game: GameSummary;
@@ -16,9 +22,10 @@
     onBack?: () => void;
     onSelectEvent?: (id: string | null) => void;
     onUpdateGame?: (dirPath: string, updater: (g: GameSummary) => GameSummary) => void;
+    onDeleteGame?: (dirPath: string) => void;
   }
 
-  let { game, activeEventId = null, onBack, onSelectEvent, onUpdateGame }: Props = $props();
+  let { game, activeEventId = null, onBack, onSelectEvent, onUpdateGame, onDeleteGame }: Props = $props();
   let info = $derived(game.state.game_info);
   let gs = $derived(game.state);
 
@@ -273,6 +280,48 @@
       actionLoading = null;
     }
   }
+
+  async function handleRegenerateImage() {
+    actionLoading = "regen-image";
+    actionError = "";
+    try {
+      const homeProfile = lookupTeam(info.home_team);
+      const awayProfile = lookupTeam(info.away_team);
+
+      const contextData: Record<string, unknown> = {
+        game_dir: game.dir_path,
+        game_info: {
+          sport: info.sport,
+          home_team: info.home_team,
+          away_team: info.away_team,
+          date: info.date,
+          venue: info.venue,
+          game_time: info.game_time,
+          level: info.level,
+          tournament: info.tournament,
+          description: info.description,
+        },
+        regenerate_image_only: true,
+        ...(homeProfile ? { home_profile: homeProfile } : {}),
+        ...(awayProfile ? { away_profile: awayProfile } : {}),
+      };
+
+      const configPath = getDockSettings().reeln_config_path ?? undefined;
+      const result = await executePluginHook("on_game_init", contextData, {}, configPath);
+
+      if (result.success) {
+        log.info("GameView", "Game image regenerated");
+      } else {
+        actionError = result.errors.join("\n") || "Hook execution failed";
+        log.error("GameView", `Regenerate image failed: ${actionError}`);
+      }
+    } catch (err) {
+      actionError = String(err);
+      log.error("GameView", `Failed to regenerate image: ${err}`);
+    } finally {
+      actionLoading = null;
+    }
+  }
 </script>
 
 <div class="flex flex-col h-full">
@@ -299,6 +348,13 @@
         </div>
       </div>
       <div class="flex items-center gap-2">
+        <button
+          class="px-3 py-1.5 text-xs font-medium text-text-muted hover:text-secondary border border-border hover:border-secondary/30 rounded-lg transition-colors disabled:opacity-50"
+          disabled={actionLoading === "regen-image"}
+          onclick={handleRegenerateImage}
+        >
+          {actionLoading === "regen-image" ? "Generating..." : "Regenerate Image"}
+        </button>
         {#if gs.finished}
           <span class="px-3 py-1 rounded-full bg-green-900 text-green-300 text-sm">Finished</span>
         {:else}
@@ -464,6 +520,7 @@
         {#if gs.events.length === 0}
           <p class="text-text-muted text-sm">No events recorded.</p>
         {:else}
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
           <div class="bg-surface rounded-lg border border-border overflow-hidden">
             <table class="w-full text-sm">
               <thead>
@@ -645,6 +702,7 @@
         {#if gs.renders.length === 0}
           <p class="text-text-muted text-sm">No renders yet.</p>
         {:else}
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
           <div class="bg-surface rounded-lg border border-border overflow-hidden">
             <table class="w-full text-sm">
               <thead>
@@ -676,9 +734,58 @@
         {/if}
       {/if}
     </div>
+
+    <!-- Prune / Delete Game -->
+    <div class="pt-2 border-t border-border flex flex-wrap items-start gap-3">
+      {#if gs.finished}
+        <div>
+          <button
+            class="px-3 py-1.5 text-xs font-medium text-text-muted hover:text-accent border border-border hover:border-accent/30 rounded-lg transition-colors"
+            onclick={() => showPruneModal = true}
+          >
+            Prune Game Files
+          </button>
+          <p class="text-[11px] text-text-muted mt-1">Remove generated artifacts to free disk space.</p>
+        </div>
+      {/if}
+      <div>
+        <button
+          class="px-3 py-1.5 text-xs font-medium text-text-muted hover:text-accent border border-border hover:border-accent/30 rounded-lg transition-colors"
+          onclick={() => showDeleteModal = true}
+        >
+          Delete Game
+        </button>
+        <p class="text-[11px] text-text-muted mt-1">Permanently remove the entire game directory.</p>
+      </div>
+    </div>
   </div>
 </div>
 
 {#if activeRender}
   <RenderPlaybackModal render={activeRender} onClose={() => activeRender = null} />
+{/if}
+
+{#if showPruneModal}
+  <PrunePreviewModal
+    gameDir={game.dir_path}
+    onClose={() => showPruneModal = false}
+    onPruned={() => {
+      // Reload game state after prune
+      import("$lib/ipc/games").then(({ getGameState }) => {
+        getGameState(game.dir_path).then((state) => {
+          onUpdateGame?.(game.dir_path, () => ({ dir_path: game.dir_path, state }));
+        });
+      });
+    }}
+  />
+{/if}
+
+{#if showDeleteModal}
+  <DeleteGameModal
+    gameDir={game.dir_path}
+    onClose={() => showDeleteModal = false}
+    onDeleted={() => {
+      onDeleteGame?.(game.dir_path);
+    }}
+  />
 {/if}

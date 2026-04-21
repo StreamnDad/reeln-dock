@@ -13,6 +13,28 @@ pub fn probe_clip(path: String) -> Result<MediaInfoResponse, String> {
     Ok(info.into())
 }
 
+/// Return the host OS identifier so the frontend can tailor labels/behavior
+/// without pulling in @tauri-apps/plugin-os.
+#[tauri::command]
+pub fn get_platform() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "macos"
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "windows"
+    }
+    #[cfg(target_os = "linux")]
+    {
+        "linux"
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        "other"
+    }
+}
+
 #[tauri::command]
 pub fn open_in_finder(path: String) -> Result<(), String> {
     let p = Path::new(&path);
@@ -178,6 +200,25 @@ mod tests {
     fn file_exists_existing_directory() {
         let tmp = tempfile::tempdir().unwrap();
         assert!(file_exists(tmp.path().to_str().unwrap().to_string()));
+    }
+
+    // ── get_platform ─────────────────────────────────────────────────
+
+    #[test]
+    fn get_platform_returns_host_os() {
+        let platform = get_platform();
+        // Must match one of the known values for the platforms we target.
+        assert!(
+            matches!(platform, "macos" | "windows" | "linux" | "other"),
+            "unexpected platform string: {platform}"
+        );
+
+        #[cfg(target_os = "macos")]
+        assert_eq!(platform, "macos");
+        #[cfg(target_os = "windows")]
+        assert_eq!(platform, "windows");
+        #[cfg(target_os = "linux")]
+        assert_eq!(platform, "linux");
     }
 
     // ── open_in_finder ───────────────────────────────────────────────

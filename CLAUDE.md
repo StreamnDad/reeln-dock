@@ -70,6 +70,63 @@ Rules:
 
 Violation of CLI parity is a **critical bug** — treat it with the same urgency as data loss.
 
+### State Mutation Boundary (CRITICAL)
+
+**The dock MUST NOT directly mutate `GameState` fields.** All state mutations go through
+`reeln-state` functions. The dock is a thin UX layer — it routes user actions to
+`reeln-state` (and other `reeln-core` crates), then reflects the result in the UI.
+
+```
+WRONG:  state.finished = true;
+        state.finished_at = chrono::Utc::now().to_rfc3339();
+        reeln_state::save_game_state(&state, path)?;
+
+RIGHT:  reeln_state::mark_finished(&mut state);
+        reeln_state::save_game_state(&state, path)?;
+```
+
+#### What the Dock DOES Own
+
+- Tauri IPC routing (`#[tauri::command]` handlers)
+- Frontend stores, reactivity, and UI components
+- Progress reporting and Tauri event emission
+- Render queue management (dock-only persistence in `render-queue.json`)
+- Window/sidebar/view state (session-only, no `game.json` impact)
+- Orchestration sequencing (e.g., "find videos, then concat, then update state")
+  — but each state mutation step calls a `reeln-state` function
+
+#### What the Dock MUST NOT Own
+
+- Event field mutation logic (use `reeln_state::update_event_field()`)
+- Event type tagging (use `reeln_state::tag_event()`)
+- Render entry creation (use `reeln_state::add_render()`)
+- Render pruning (use `reeln_state::clear_renders()`)
+- Segment processed tracking (use `reeln_state::mark_segment_processed()`)
+- Highlight merge state (use `reeln_state::mark_highlighted()`)
+- Game finish state (use `reeln_state::mark_finished()`)
+- Tournament assignment (use `reeln_state::set_tournament()`)
+
+#### Migration Checklist (existing violations)
+
+These dock functions currently mutate `GameState` directly and must be refactored
+to call `reeln-state` mutation functions once they exist:
+
+| Dock Location | Violation | Target `reeln-state` Function |
+|---|---|---|
+| `commands/games.rs::update_game_event` | Mutates event fields directly | `update_event_field()` |
+| `commands/games.rs::set_game_tournament` | Sets `game_info.tournament` directly | `set_tournament()` |
+| `commands/games.rs::bulk_update_event_type` | Loops and sets `event.event_type` | `bulk_update_event_type()` |
+| `commands/games.rs::prune_renders` | Calls `state.renders.clear()` | `clear_renders()` |
+| `commands/games.rs::quick_tag_event` | Sets `event_type` + metadata directly | `tag_event()` |
+| `orchestration/game_ops.rs::process_segment` | Pushes events, segments_processed, segment_outputs | `add_event()`, `mark_segment_processed()`, `set_segment_output()` |
+| `orchestration/game_ops.rs::merge_highlights` | Sets `highlighted` + `highlights_output` | `mark_highlighted()` |
+| `orchestration/game_ops.rs::finish_game` | Sets `finished` + `finished_at` | `mark_finished()` |
+| `commands/render.rs::render_short` | Pushes to `game_state.renders` | `add_render()` |
+| `commands/render.rs::render_iteration` | Extends `game_state.renders` | `add_render()` |
+| `orchestration/render_ops.rs` | Pushes to `state.renders` | `add_render()` |
+
+Violation of state mutation boundaries is a **critical bug** — same urgency as data loss.
+
 ### Key Domain Concepts
 
 | Concept | Description |

@@ -13,6 +13,7 @@
     onended?: () => void;
     onerror?: () => void;
     onloadeddata?: () => void;
+    onloadedmetadata?: () => void;
   }
 
   let {
@@ -23,6 +24,7 @@
     onended,
     onerror,
     onloadeddata,
+    onloadedmetadata,
   }: Props = $props();
 
   let videoEl = $state<HTMLVideoElement | null>(null);
@@ -81,6 +83,7 @@
   function handleLoadedMetadata() {
     if (!videoEl) return;
     duration = videoEl.duration;
+    onloadedmetadata?.();
   }
 
 

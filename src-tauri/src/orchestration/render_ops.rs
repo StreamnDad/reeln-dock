@@ -18,7 +18,11 @@ pub struct CliRenderParams<'a> {
     pub config_path: Option<&'a str>,
     pub input_clip: &'a Path,
     pub game_dir: &'a Path,
-    pub profile_name: &'a str,
+    /// One or more render profiles. When multiple are given, the CLI renders
+    /// each and concatenates the outputs into a single file — handling queue
+    /// entry creation (`--queue`) and `game.json` bookkeeping in one place.
+    /// Maps to one or more `--render-profile` flags.
+    pub profile_names: &'a [&'a str],
     pub event_id: Option<&'a str>,
     pub mode: Option<&'a str>,
     pub overrides: Option<&'a RenderOverrides>,
@@ -38,11 +42,23 @@ pub struct CliRenderParams<'a> {
     pub queue: bool,
 }
 
+impl<'a> CliRenderParams<'a> {
+    /// First profile name, for fallback output detection. Empty string when
+    /// no profiles were provided (which callers should treat as an error).
+    fn first_profile(&self) -> &'a str {
+        self.profile_names.first().copied().unwrap_or("")
+    }
+}
+
 /// Render via the reeln CLI subprocess. Returns new RenderEntries added to game state.
 ///
 /// The CLI handles: builtin templates, speed_segments, smart zoom, player overlays,
 /// POST_RENDER plugin hooks, and all other features the native backend can't do.
 pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, String> {
+    if params.profile_names.is_empty() {
+        return Err("render_via_cli called with no profile names".to_string());
+    }
+
     // Snapshot renders before CLI call so we can diff afterward
     let pre_render_count = reeln_state::load_game_state(params.game_dir)
         .map(|s| s.renders.len())
@@ -56,8 +72,12 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
     // Positional: clip path
     cmd.arg(params.input_clip);
 
-    // Profile
-    cmd.arg("--render-profile").arg(params.profile_name);
+    // Profiles — repeatable. When multiple are given, the CLI renders each
+    // profile and concatenates the results into one output file, and (with
+    // --queue) creates exactly one queue entry for the concatenated file.
+    for name in params.profile_names {
+        cmd.arg("--render-profile").arg(name);
+    }
 
     // Game dir
     cmd.arg("--game-dir").arg(params.game_dir);
@@ -229,14 +249,17 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
         candidates.push(clip_parent.join("shorts").join(format!("{stem}_short.mp4")));
         // CLI iteration: {clip_parent}/shorts/{stem}_short.mp4 (same)
         candidates.push(params.game_dir.join("renders").join(format!("{stem}_iteration.mp4")));
-        candidates.push(params.game_dir.join("renders").join(format!("{stem}_{}.mp4", params.profile_name)));
+        candidates.push(params.game_dir.join("renders").join(format!("{stem}_{}.mp4", params.first_profile())));
 
         if let Some(output_path) = candidates.iter().find(|p| p.is_file()) {
+            // Stamp the entry's format with the full profile list ("a+b+c")
+            // for multi-profile iterations, matching reeln-core's IterationResult.
+            let format = params.profile_names.join("+");
             let entry = RenderEntry {
                 input: params.input_clip.display().to_string(),
                 output: output_path.display().to_string(),
                 segment_number: 0,
-                format: params.profile_name.to_string(),
+                format,
                 crop_mode: params.overrides
                     .and_then(|o| o.crop_mode.clone())
                     .unwrap_or_default(),
@@ -246,7 +269,7 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
             // Save to game state
             let mut state = reeln_state::load_game_state(params.game_dir)
                 .map_err(|e| e.to_string())?;
-            state.renders.push(entry.clone());
+            reeln_state::add_render(&mut state, entry.clone());
             reeln_state::save_game_state(&state, params.game_dir)
                 .map_err(|e| e.to_string())?;
             return Ok(vec![entry]);
@@ -819,7 +842,7 @@ pub fn render_profile_preview(
     // Probe source to get dimensions — needed for safe filter construction
     let source = backend.probe(input_clip).map_err(|e| e.to_string())?;
     let src_w = source.width.unwrap_or(1920);
-    let src_h = source.height.unwrap_or(1080);
+    let _src_h = source.height.unwrap_or(1080);
 
     let stem = input_clip
         .file_stem()
@@ -1102,7 +1125,7 @@ mod tests {
             config_path: None,
             input_clip: &input,
             game_dir: &game_dir,
-            profile_name: "tiktok",
+            profile_names: &["tiktok"],
             event_id: None,
             mode: None, // defaults to "short"
             overrides: None,
@@ -1153,7 +1176,7 @@ mod tests {
             config_path: None,
             input_clip: &input,
             game_dir: &game_dir,
-            profile_name: "full",
+            profile_names: &["full"],
             event_id: None,
             mode: Some("apply"),
             overrides: None,
@@ -1193,7 +1216,7 @@ mod tests {
             config_path: Some("/config/google-test.json"),
             input_clip: &input,
             game_dir: &game_dir,
-            profile_name: "tiktok",
+            profile_names: &["tiktok"],
             event_id: None,
             mode: None,
             overrides: None,
@@ -1232,7 +1255,7 @@ mod tests {
             config_path: None,
             input_clip: &input,
             game_dir: &game_dir,
-            profile_name: "tiktok",
+            profile_names: &["tiktok"],
             event_id: None,
             mode: None,
             overrides: None,
@@ -1270,7 +1293,7 @@ mod tests {
             config_path: None,
             input_clip: &input,
             game_dir: &game_dir,
-            profile_name: "tiktok",
+            profile_names: &["tiktok"],
             event_id: Some("goal_1"),
             mode: None,
             overrides: None,
@@ -1308,7 +1331,7 @@ mod tests {
             config_path: None,
             input_clip: &input,
             game_dir: &game_dir,
-            profile_name: "tiktok",
+            profile_names: &["tiktok"],
             event_id: Some(""),
             mode: None,
             overrides: None,
@@ -1354,7 +1377,7 @@ mod tests {
             config_path: None,
             input_clip: &input,
             game_dir: &game_dir,
-            profile_name: "tiktok",
+            profile_names: &["tiktok"],
             event_id: None,
             mode: None,
             overrides: Some(&overrides),
@@ -1413,7 +1436,7 @@ mod tests {
             config_path: None,
             input_clip: &input,
             game_dir: &game_dir,
-            profile_name: "full",
+            profile_names: &["full"],
             event_id: None,
             mode: Some("apply"),
             overrides: Some(&overrides),
@@ -1459,7 +1482,7 @@ mod tests {
             config_path: None,
             input_clip: &input,
             game_dir: &game_dir,
-            profile_name: "tiktok",
+            profile_names: &["tiktok"],
             event_id: None,
             mode: None,
             overrides: Some(&overrides),
@@ -1497,7 +1520,7 @@ mod tests {
             config_path: None,
             input_clip: &input,
             game_dir: &game_dir,
-            profile_name: "tiktok",
+            profile_names: &["tiktok"],
             event_id: None,
             mode: None,
             overrides: None,
@@ -1538,7 +1561,7 @@ mod tests {
             config_path: None,
             input_clip: &input,
             game_dir: &game_dir,
-            profile_name: "tiktok",
+            profile_names: &["tiktok"],
             event_id: None,
             mode: None,
             overrides: None,
@@ -1597,7 +1620,7 @@ mod tests {
             config_path: Some("/config/google.json"),
             input_clip: &input,
             game_dir: &game_dir,
-            profile_name: "tiktok",
+            profile_names: &["tiktok"],
             event_id: Some("goal_1"),
             mode: None,
             overrides: Some(&overrides),
@@ -1644,6 +1667,103 @@ mod tests {
         let pi_values: Vec<&str> = pi_indices.iter().map(|i| args[i + 1].as_str()).collect();
         assert!(pi_values.contains(&"smart_zoom=true"));
         assert!(pi_values.contains(&"quality=high"));
+    }
+
+    #[test]
+    fn test_cli_args_multi_profile_emits_repeatable_render_profile_flags() {
+        // Core contract for the "one render, one queue entry" fix:
+        // when profile_names contains ≥2 names, render_via_cli emits
+        // --render-profile once per name, in order. The CLI takes it from
+        // there (renders each, concatenates, queues exactly once).
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args.txt");
+        let script = make_arg_dump_script(dir.path(), &args_file);
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let game_dir = dir.path().join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+
+        let params = CliRenderParams {
+            cli_path: script.to_str().unwrap(),
+            config_path: None,
+            input_clip: &input,
+            game_dir: &game_dir,
+            profile_names: &["player-overlay", "slowmo-ten-second-clip"],
+            event_id: None,
+            mode: None,
+            overrides: None,
+            scorer: None,
+            assist1: None,
+            assist2: None,
+            iterate: false, // NOT --iterate — we pass an explicit list instead
+            event_type: None,
+            debug: false,
+            player_numbers: None,
+            no_branding: false,
+            output_path: None,
+            queue: true,
+        };
+
+        let _ = render_via_cli(&params);
+        let args = read_dumped_args(&args_file);
+
+        // Every name should appear exactly once after a --render-profile flag,
+        // and in the same order the caller provided.
+        let rp_indices: Vec<usize> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| *a == "--render-profile")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(rp_indices.len(), 2, "expected two --render-profile flags; got args: {args:?}");
+        assert_eq!(args[rp_indices[0] + 1], "player-overlay");
+        assert_eq!(args[rp_indices[1] + 1], "slowmo-ten-second-clip");
+
+        // --queue must be forwarded so the CLI creates the single queue
+        // entry for the concatenated output.
+        assert!(args.contains(&"--queue".to_string()));
+        // --iterate must NOT be emitted — we're providing the list explicitly.
+        assert!(!args.contains(&"--iterate".to_string()));
+    }
+
+    #[test]
+    fn test_render_via_cli_rejects_empty_profile_list() {
+        // Defensive: an empty profile list is a caller bug and should error
+        // loudly instead of silently invoking the CLI with no profile.
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args.txt");
+        let script = make_arg_dump_script(dir.path(), &args_file);
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let game_dir = dir.path().join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+
+        let params = CliRenderParams {
+            cli_path: script.to_str().unwrap(),
+            config_path: None,
+            input_clip: &input,
+            game_dir: &game_dir,
+            profile_names: &[],
+            event_id: None,
+            mode: None,
+            overrides: None,
+            scorer: None,
+            assist1: None,
+            assist2: None,
+            iterate: false,
+            event_type: None,
+            debug: false,
+            player_numbers: None,
+            no_branding: false,
+            output_path: None,
+            queue: false,
+        };
+
+        let result = render_via_cli(&params);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("no profile names"));
+        // The script should not have been invoked either.
+        assert!(!args_file.is_file());
     }
 
     // -----------------------------------------------------------------------

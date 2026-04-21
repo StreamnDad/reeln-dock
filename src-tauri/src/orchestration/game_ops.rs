@@ -6,6 +6,8 @@ use reeln_media::{ConcatOptions, MediaBackend};
 use reeln_sport::{SportRegistry, segment_dir_name, make_segments};
 use reeln_state::{GameInfo, GameState};
 
+use crate::commands::teams::slugify;
+
 use super::progress::ProgressReporter;
 
 /// Parameters for creating a new game.
@@ -19,6 +21,7 @@ pub struct InitGameParams {
     pub level: Option<String>,
     pub tournament: Option<String>,
     pub period_length: Option<u32>,
+    pub description: Option<String>,
 }
 
 /// Initialize a new game: create directory, segment subdirs, and game.json.
@@ -58,11 +61,14 @@ pub fn init_game(
         venue: params.venue.unwrap_or_default(),
         game_time: params.game_time.unwrap_or_default(),
         period_length,
-        description: String::new(),
+        description: params.description.unwrap_or_default(),
         thumbnail: String::new(),
         level: params.level.unwrap_or_default(),
-        home_slug: params.home_team.to_lowercase().replace(' ', "-"),
-        away_slug: params.away_team.to_lowercase().replace(' ', "-"),
+        // CLI parity: must match `reeln.core.teams.slugify` so the CLI can
+        // resolve team profiles at `{level}/{slug}.json`. Previously this
+        // used hyphens which broke roster/logo lookup during render.
+        home_slug: slugify(&params.home_team),
+        away_slug: slugify(&params.away_team),
         tournament: params.tournament.unwrap_or_default(),
     };
 
@@ -148,22 +154,22 @@ pub fn process_segment(
             .unwrap_or_else(|_| video.display().to_string());
 
         if !existing_clips.contains(&rel_path) {
-            state.events.push(reeln_state::GameEvent {
-                id: uuid::Uuid::new_v4().to_string(),
-                clip: rel_path,
-                segment_number,
-                event_type: String::new(),
-                player: String::new(),
-                created_at: now.clone(),
-                metadata: std::collections::HashMap::new(),
-            });
+            reeln_state::add_event(
+                &mut state,
+                reeln_state::GameEvent {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    clip: rel_path,
+                    segment_number,
+                    event_type: String::new(),
+                    player: String::new(),
+                    created_at: now.clone(),
+                    metadata: std::collections::HashMap::new(),
+                },
+            );
         }
     }
 
-    if !state.segments_processed.contains(&segment_number) {
-        state.segments_processed.push(segment_number);
-        state.segments_processed.sort();
-    }
+    reeln_state::mark_segment_processed(&mut state, segment_number);
 
     reeln_state::save_game_state(&state, game_dir).map_err(|e| e.to_string())?;
 
@@ -191,9 +197,7 @@ pub fn process_segment(
         .concat(&segment_paths, &output, &opts)
         .map_err(|e| e.to_string())?;
 
-    state
-        .segment_outputs
-        .push(output.display().to_string());
+    reeln_state::set_segment_output(&mut state, output.display().to_string());
 
     reeln_state::save_game_state(&state, game_dir).map_err(|e| e.to_string())?;
 
@@ -248,8 +252,7 @@ pub fn merge_highlights(
         .concat(&segment_refs, &highlights_output, &opts)
         .map_err(|e| e.to_string())?;
 
-    state.highlighted = true;
-    state.highlights_output = highlights_output.display().to_string();
+    reeln_state::mark_highlighted(&mut state, highlights_output.display().to_string());
 
     reeln_state::save_game_state(&state, game_dir).map_err(|e| e.to_string())?;
 
@@ -263,8 +266,7 @@ pub fn merge_highlights(
 /// Mark a game as finished.
 pub fn finish_game(game_dir: &Path) -> Result<GameState, String> {
     let mut state = reeln_state::load_game_state(game_dir).map_err(|e| e.to_string())?;
-    state.finished = true;
-    state.finished_at = chrono::Utc::now().to_rfc3339();
+    reeln_state::mark_finished(&mut state);
     reeln_state::save_game_state(&state, game_dir).map_err(|e| e.to_string())?;
     Ok(state)
 }
@@ -317,5 +319,43 @@ mod tests {
     fn finish_game_errors_for_nonexistent_dir() {
         let err = finish_game(Path::new("/tmp/nonexistent_reeln_game_ops_xyz")).unwrap_err();
         assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn init_game_slug_matches_cli_team_profile_filename() {
+        // CLI parity regression: dock-created games must use the same
+        // slug scheme the CLI uses to look up team profiles. A hyphen-based
+        // slug (the old behavior) breaks `--player-numbers` roster lookup
+        // because the CLI tries to load `{level}/{slug}.json` and finds
+        // nothing.
+        use reeln_config::PathConfig;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let output_dir = tmp.path().to_path_buf();
+
+        let mut config = AppConfig::default();
+        config.paths = PathConfig {
+            output_dir: Some(output_dir.clone()),
+            ..Default::default()
+        };
+
+        let registry = SportRegistry::default();
+        let params = InitGameParams {
+            sport: "hockey".to_string(),
+            home_team: "Machine Orange".to_string(),
+            away_team: "Blades Maroon".to_string(),
+            date: "2026-04-10".to_string(),
+            venue: None,
+            game_time: None,
+            level: Some("2014".to_string()),
+            tournament: None,
+            period_length: None,
+            description: None,
+        };
+
+        let (_dir, state) = init_game(&config, &registry, params).unwrap();
+
+        assert_eq!(state.game_info.home_slug, "machine_orange");
+        assert_eq!(state.game_info.away_slug, "blades_maroon");
     }
 }

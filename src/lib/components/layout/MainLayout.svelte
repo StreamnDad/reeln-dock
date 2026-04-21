@@ -82,6 +82,14 @@
     setGames(gamesData);
   }
 
+  function handleDeleteGame(dirPath: string) {
+    gamesData = gamesData.filter(g => g.dir_path !== dirPath);
+    setGames(gamesData);
+    selectedGameDir = null;
+    selectedEventId_ = null;
+    expandedClipReview = false;
+  }
+
   // Event navigation for clip review
   function getEventIds(): string[] {
     const game = gamesData.find(g => g.dir_path === selectedGameDir);
@@ -367,6 +375,7 @@
                   onBack={() => { selectedGameDir = null; selectedEventId_ = null; expandedClipReview = false; }}
                   onSelectEvent={(id) => { selectedEventId_ = id; }}
                   onUpdateGame={handleUpdateGame}
+                  onDeleteGame={handleDeleteGame}
                 />
               </div>
               {#if selectedEvent}

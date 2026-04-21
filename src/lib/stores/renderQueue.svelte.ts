@@ -275,7 +275,14 @@ export async function editCliItem(
   }
 }
 
-/** Publish a CLI queue item to target(s). */
+/** Publish a CLI queue item to target(s).
+ *
+ * When ``configPath`` is omitted (typical dock usage), this auto-resolves
+ * the item's stored ``config_profile`` to its file path so the CLI loads
+ * the same plugin config used at render time. Without this, the CLI
+ * would fall back to the default config — where plugin feature flags
+ * (like cloudflare ``upload_video``) are off — and every target would be
+ * skipped or fail. */
 export async function publishCliItem(
   gameDir: string,
   itemId: string,
@@ -283,7 +290,14 @@ export async function publishCliItem(
   configPath?: string,
 ): Promise<void> {
   try {
-    const updated = await queuePublish(gameDir, itemId, target, configPath);
+    const effectiveConfigPath =
+      configPath ?? (await _autoResolveItemConfigPath(itemId));
+    const updated = await queuePublish(
+      gameDir,
+      itemId,
+      target,
+      effectiveConfigPath,
+    );
     cliItems = cliItems.map((i) => (i.id === updated.id ? updated : i));
   } catch (err) {
     log.error("RenderQueue", `Failed to publish queue item: ${err}`);
@@ -291,13 +305,19 @@ export async function publishCliItem(
   }
 }
 
-/** Publish all rendered items in a game's queue. */
+/** Publish all rendered items in a game's queue.
+ *
+ * See :func:`publishCliItem` for the config-path auto-resolution logic.
+ * For the bulk path we resolve using the first rendered item's profile
+ * — all items in a game almost always share the same config profile. */
 export async function publishAllCliItems(
   gameDir: string,
   configPath?: string,
 ): Promise<void> {
   try {
-    const updated = await queuePublishAll(gameDir, configPath);
+    const effectiveConfigPath =
+      configPath ?? (await _autoResolveGameConfigPath(gameDir));
+    const updated = await queuePublishAll(gameDir, effectiveConfigPath);
     // Replace all items for this game
     const otherItems = cliItems.filter((i) => i.game_dir !== gameDir);
     cliItems = [...otherItems, ...updated];
@@ -305,6 +325,29 @@ export async function publishAllCliItems(
     log.error("RenderQueue", `Failed to publish all: ${err}`);
     throw err;
   }
+}
+
+/** Look up a queue item by ID and resolve its stored config_profile
+ * to a config file path. Returns undefined when the item can't be
+ * found or the profile name doesn't resolve. */
+async function _autoResolveItemConfigPath(
+  itemId: string,
+): Promise<string | undefined> {
+  const item = cliItems.find((i) => i.id === itemId);
+  if (!item || !item.config_profile) return undefined;
+  return resolveProfilePath(item.config_profile);
+}
+
+/** Resolve a config path for a game's bulk publish by reading the
+ * first rendered item's stored config_profile. */
+async function _autoResolveGameConfigPath(
+  gameDir: string,
+): Promise<string | undefined> {
+  const item = cliItems.find(
+    (i) => i.game_dir === gameDir && i.config_profile,
+  );
+  if (!item) return undefined;
+  return resolveProfilePath(item.config_profile);
 }
 
 /** Soft-delete a CLI queue item. */

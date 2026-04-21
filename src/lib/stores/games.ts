@@ -117,6 +117,17 @@ export function getTournamentGroups(
   for (const game of filtered) {
     const tournament = game.state.game_info.tournament || "Ungrouped";
     if (archivedNames && !showArchived && archivedNames.has(tournament)) continue;
+    // Done games without a tournament are "finished" from the user's POV;
+    // treat them like ended tournaments and hide them behind the +ended toggle.
+    // Exception: if the user explicitly filters by "done", still show them.
+    if (
+      tournament === "Ungrouped" &&
+      !showArchived &&
+      status !== "done" &&
+      gameStatus(game) === "done"
+    ) {
+      continue;
+    }
     const list = grouped.get(tournament) ?? [];
     list.push(game);
     grouped.set(tournament, list);

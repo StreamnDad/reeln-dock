@@ -516,13 +516,13 @@
       <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted pt-2">Plugins</h3>
       <div>
         <span class="text-text-muted block">Enabled</span>
-        <span>{config.plugins.enabled.join(", ") || "none"}</span>
+        <span>{(config.plugins?.enabled ?? []).join(", ") || "none"}</span>
       </div>
 
-      {#if Object.keys(config.render_profiles).length > 0}
+      {#if Object.keys(config.render_profiles ?? {}).length > 0}
         <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted pt-2">Render Profiles</h3>
         <div>
-          {#each Object.keys(config.render_profiles) as name}
+          {#each Object.keys(config.render_profiles ?? {}) as name}
             <span class="inline-block px-2 py-0.5 rounded bg-bg text-text-muted text-xs mr-1 mb-1">{name}</span>
           {/each}
         </div>

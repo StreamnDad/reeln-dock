@@ -149,8 +149,8 @@
             <div><span class="text-text-muted">Output:</span> {config.paths.output_dir ?? "(not set)"}</div>
             <div><span class="text-text-muted">Source:</span> {config.paths.source_dir ?? "(not set)"}</div>
             <div><span class="text-text-muted">Codec:</span> {config.video.codec}</div>
-            <div><span class="text-text-muted">Enabled plugins:</span> {config.plugins.enabled.join(", ") || "none"}</div>
-            <div><span class="text-text-muted">Render profiles:</span> {Object.keys(config.render_profiles).join(", ") || "none"}</div>
+            <div><span class="text-text-muted">Enabled plugins:</span> {(config.plugins?.enabled ?? []).join(", ") || "none"}</div>
+            <div><span class="text-text-muted">Render profiles:</span> {Object.keys(config.render_profiles ?? {}).join(", ") || "none"}</div>
           </div>
         {/if}
 

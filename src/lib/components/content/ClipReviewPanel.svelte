@@ -148,20 +148,24 @@
     if (dockRendering?.default_render_mode) {
       renderMode = dockRendering.default_render_mode as "short" | "apply";
     }
-    // Apply default render overrides from dock
-    const dockOverrides = dockRendering?.overrides;
+    // Apply default render overrides from dock.
+    //
+    // Merge order: plugin defaults first (from Settings → Plugin Defaults,
+    // stored in rendering.plugin_field_defaults), then dock overrides
+    // (Settings → Render Overrides) on top. Previously this spread plugin
+    // defaults and then explicitly re-assigned every core key — which
+    // silently clobbered plugin-contributed fields like `zoom_frames`
+    // with `undefined` whenever the user had no matching dock override,
+    // so "Zoom Frames = 16" in plugin defaults never reached this panel.
+    const dockOverrides = (dockRendering?.overrides ?? {}) as Record<string, unknown>;
     const pluginDefaults = (dockRendering?.plugin_field_defaults as Record<string, unknown>) ?? {};
-    overrides = {
-      ...pluginDefaults,
-      crop_mode: dockOverrides?.crop_mode,
-      scale: dockOverrides?.scale ?? 1.0,
-      speed: dockOverrides?.speed ?? 1.0,
-      smart: dockOverrides?.smart,
-      anchor_x: dockOverrides?.anchor_x,
-      anchor_y: dockOverrides?.anchor_y,
-      pad_color: dockOverrides?.pad_color,
-      zoom_frames: dockOverrides?.zoom_frames,
-    };
+    const merged: Record<string, unknown> = { ...pluginDefaults, ...dockOverrides };
+    // Ensure the scale/speed sliders always have a concrete default — they
+    // are only persisted to dockOverrides when the user changes them away
+    // from 1.0, so an unset merge result should fall back to 1.0.
+    if (merged.scale == null) merged.scale = 1.0;
+    if (merged.speed == null) merged.speed = 1.0;
+    overrides = merged as RenderOverrides;
   });
 
   // Prefill from queue edit request
@@ -422,6 +426,32 @@
   function handleAddToQueue() {
     if (renderQueue.length === 0) return;
     const info = game.state.game_info;
+
+    // Resolve selected player names to jersey numbers so the CLI can do its
+    // canonical roster lookup via --player-numbers. That lookup is what pulls
+    // in the team logo and scoring team; passing only --player/--assists
+    // skips it entirely and the overlay renders without the #NN prefix or
+    // the team logo.
+    //
+    // Only switch to number-based passing when every non-empty selection
+    // resolves cleanly; otherwise fall back to the raw names to preserve
+    // user intent (e.g. free-text entries that don't match the roster).
+    const resolveNumber = (name: string): { num?: string; orphaned: boolean } => {
+      if (!name) return { orphaned: false };
+      const entry = activeRoster.find((e) => e.name === name);
+      if (entry?.number) return { num: entry.number, orphaned: false };
+      return { orphaned: true };
+    };
+
+    const scorerRes = resolveNumber(currentScorer);
+    const assist1Res = resolveNumber(currentAssist1);
+    const assist2Res = resolveNumber(currentAssist2);
+    const anyOrphaned = scorerRes.orphaned || assist1Res.orphaned || assist2Res.orphaned;
+    const resolvedNumbers = [scorerRes.num, assist1Res.num, assist2Res.num]
+      .filter((n): n is string => Boolean(n));
+    const canUseRoster = !anyOrphaned && resolvedNumbers.length > 0;
+    const playerNumbers = canUseRoster ? resolvedNumbers.join(",") : undefined;
+
     addToRenderQueue({
       gameDir: game.dir_path,
       gameName: `${info.home_team} vs ${info.away_team}`,
@@ -434,9 +464,13 @@
       pluginProfile: selectedPluginProfile || undefined,
       mode: renderMode,
       debug: debugEnabled || undefined,
-      scorer: currentScorer || undefined,
-      assist1: currentAssist1 || undefined,
-      assist2: currentAssist2 || undefined,
+      // When playerNumbers is set, let the CLI resolve names via roster so
+      // the overlay shows "#48 Smith" and loads the team logo. Otherwise
+      // fall back to passing the raw names.
+      scorer: canUseRoster ? undefined : (currentScorer || undefined),
+      assist1: canUseRoster ? undefined : (currentAssist1 || undefined),
+      assist2: canUseRoster ? undefined : (currentAssist2 || undefined),
+      playerNumbers,
     });
     queueAdded = true;
     setTimeout(() => { queueAdded = false; }, 1500);

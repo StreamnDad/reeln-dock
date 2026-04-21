@@ -1,6 +1,6 @@
 <script lang="ts">
   import { convertFileSrc } from "@tauri-apps/api/core";
-  import { openInFinder } from "$lib/ipc/media";
+  import { openInFinder, getPlatform, revealLabel, type Platform } from "$lib/ipc/media";
   import VideoPlayer from "./VideoPlayer.svelte";
   import type { CliQueueItem } from "$lib/types/queue";
   import {
@@ -25,6 +25,10 @@
   let loadingTargets = $state(false);
   let targetsError = $state<string | null>(null);
   let videoLoaded = $state(false);
+  let platform = $state<Platform>("other");
+  let revealButtonLabel = $derived(revealLabel(platform));
+
+  getPlatform().then((p) => { platform = p; }).catch(() => {});
 
   let videoSrc = $derived(convertFileSrc(item.output));
 
@@ -124,8 +128,16 @@
     publishing = "all";
     error = null;
     try {
-      const pendingTargets = item.publish_targets.filter((pt) => pt.status === "pending");
-      for (const pt of pendingTargets) {
+      // Publish every target that is NOT already successfully published —
+      // covers PENDING, SKIPPED (e.g. config disabled earlier), and FAILED
+      // targets in a single click. The CLI's single-target publish path
+      // bypasses the pending filter, so per-target invocation is the way
+      // to force a retry. Already-published targets are left alone to
+      // avoid accidental double-uploads.
+      const retryTargets = item.publish_targets.filter(
+        (pt) => pt.status !== "published",
+      );
+      for (const pt of retryTargets) {
         await publishCliItem(item.game_dir, item.id, pt.target);
       }
     } catch (err) {
@@ -142,18 +154,29 @@
       default: return "bg-bg text-text-muted";
     }
   }
+
+  // "Retry All" label kicks in when at least one target has already been
+  // touched (skipped/failed/published) — distinguishes a fresh publish
+  // from a re-attempt for UX clarity.
+  function hasNonPublishedNonPending(
+    targets: readonly { status: string }[],
+  ): boolean {
+    return targets.some(
+      (t) => t.status === "skipped" || t.status === "failed",
+    );
+  }
 </script>
 
 <div class="border-t border-border px-4 py-4 space-y-4">
-  <!-- Video preview (constrained, with loading state) -->
-  <div class="relative max-w-xs max-h-80 overflow-hidden rounded bg-bg">
+  <!-- Video preview — portrait-aware sizing for 9:16 shorts -->
+  <div class="relative w-full max-w-sm mx-auto overflow-hidden rounded bg-bg">
     {#if !videoLoaded}
       <div class="absolute inset-0 flex items-center justify-center text-text-muted text-xs z-10">
         Loading video...
       </div>
     {/if}
     <div class:opacity-0={!videoLoaded}>
-      <VideoPlayer src={videoSrc} onloadeddata={() => videoLoaded = true} />
+      <VideoPlayer src={videoSrc} onloadedmetadata={() => videoLoaded = true} />
     </div>
   </div>
 
@@ -163,7 +186,7 @@
     <button
       class="px-2 py-1 text-text-muted hover:text-text bg-bg rounded transition-colors shrink-0"
       onclick={() => openInFinder(item.output)}
-    >Open in Finder</button>
+    >{revealButtonLabel}</button>
   </div>
 
   <!-- Error banner -->
@@ -257,12 +280,13 @@
   <div>
     <div class="flex items-center justify-between mb-2">
       <label class="text-xs text-text-muted">Publish Targets</label>
-      {#if item.publish_targets.some((pt) => pt.status === "pending") || discoveredTargets.length > 0}
+      {#if item.publish_targets.some((pt) => pt.status !== "published") || discoveredTargets.length > 0}
         <button
           class="px-3 py-1 text-xs bg-primary hover:bg-primary-light text-text rounded transition-colors disabled:opacity-50"
           disabled={publishing !== null || item.status === "publishing"}
           onclick={handlePublishAll}
-        >{publishing === "all" ? "Publishing..." : "Publish All"}</button>
+          title="Publish every target that isn't already successfully published (includes pending, skipped, and failed)"
+        >{publishing === "all" ? "Publishing..." : hasNonPublishedNonPending(item.publish_targets) ? "Retry All" : "Publish All"}</button>
       {/if}
     </div>
 
@@ -325,7 +349,22 @@
                   class="px-2 py-1 text-xs text-orange-400 hover:text-text bg-surface rounded transition-colors disabled:opacity-50"
                   disabled={publishing !== null || item.status === "publishing"}
                   onclick={() => handlePublishTarget(pt.target)}
-                >Retry</button>
+                  title="Retry the upload for this target"
+                >{publishing === pt.target ? "Publishing..." : "Retry"}</button>
+              {:else if pt.status === "skipped"}
+                <button
+                  class="px-2 py-1 text-xs text-yellow-400 hover:text-text bg-surface rounded transition-colors disabled:opacity-50"
+                  disabled={publishing !== null || item.status === "publishing"}
+                  onclick={() => handlePublishTarget(pt.target)}
+                  title="Force a publish attempt for this skipped target"
+                >{publishing === pt.target ? "Publishing..." : "Retry"}</button>
+              {:else if pt.status === "published"}
+                <button
+                  class="px-2 py-1 text-xs text-text-muted hover:text-text bg-surface rounded transition-colors disabled:opacity-50"
+                  disabled={publishing !== null || item.status === "publishing"}
+                  onclick={() => handlePublishTarget(pt.target)}
+                  title="Re-upload to this target (creates a duplicate)"
+                >{publishing === pt.target ? "Publishing..." : "Re-publish"}</button>
               {/if}
             </div>
           </div>
