@@ -6,9 +6,7 @@ use crate::state::{AppState, DockSettings};
 
 /// Load dock settings + the reeln config they point to (if any).
 #[tauri::command]
-pub fn load_dock_settings(
-    state: State<'_, AppState>,
-) -> Result<DockSettingsWithConfig, String> {
+pub fn load_dock_settings(state: State<'_, AppState>) -> Result<DockSettingsWithConfig, String> {
     let settings = state.dock_settings.lock().map_err(|e| e.to_string())?;
 
     let config = if let Some(ref path) = settings.reeln_config_path {
@@ -54,10 +52,7 @@ pub fn save_dock_settings(
     let mut locked = state.dock_settings.lock().map_err(|e| e.to_string())?;
     *locked = settings.clone();
 
-    Ok(DockSettingsWithConfig {
-        settings,
-        config,
-    })
+    Ok(DockSettingsWithConfig { settings, config })
 }
 
 /// Load reeln config from an explicit file path, or scan a directory for config files.
@@ -128,8 +123,7 @@ pub fn save_event_types(
     drop(settings);
 
     let content = std::fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
-    let mut raw: serde_json::Value =
-        serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    let mut raw: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
 
     if let Some(obj) = raw.as_object_mut() {
         if event_types.is_empty() {
@@ -197,8 +191,7 @@ fn read_raw_config(state: &AppState) -> Result<(serde_json::Value, String), Stri
     drop(settings);
 
     let content = std::fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
-    let raw: serde_json::Value =
-        serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    let raw: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
     Ok((raw, config_path))
 }
 
@@ -256,10 +249,10 @@ pub fn delete_render_profile(
 
     if let Some(obj) = raw.as_object_mut() {
         if let Some(profiles) = obj.get_mut("render_profiles") {
-            if let Some(profiles_obj) = profiles.as_object_mut() {
-                if profiles_obj.remove(&profile_key).is_none() {
-                    return Err(format!("Profile '{profile_key}' not found"));
-                }
+            if let Some(profiles_obj) = profiles.as_object_mut()
+                && profiles_obj.remove(&profile_key).is_none()
+            {
+                return Err(format!("Profile '{profile_key}' not found"));
             }
         } else {
             return Err(format!("Profile '{profile_key}' not found"));
@@ -469,8 +462,13 @@ mod tests {
         let profile = serde_json::json!({"name": "tiktok", "width": 1080, "height": 1920});
 
         if let Some(obj) = raw.as_object_mut() {
-            let profiles = obj.entry("render_profiles").or_insert_with(|| serde_json::json!({}));
-            profiles.as_object_mut().unwrap().insert("tiktok".to_string(), profile);
+            let profiles = obj
+                .entry("render_profiles")
+                .or_insert_with(|| serde_json::json!({}));
+            profiles
+                .as_object_mut()
+                .unwrap()
+                .insert("tiktok".to_string(), profile);
         }
         write_raw_config(&raw, &path, &state).unwrap();
 
@@ -484,7 +482,11 @@ mod tests {
     fn save_profile_updates_existing_profile() {
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("config.json");
-        std::fs::write(&config_path, r#"{"config_version":1,"render_profiles":{"tiktok":{"width":720,"height":1280}}}"#).unwrap();
+        std::fs::write(
+            &config_path,
+            r#"{"config_version":1,"render_profiles":{"tiktok":{"width":720,"height":1280}}}"#,
+        )
+        .unwrap();
         let state = make_test_app_state(&config_path.display().to_string(), dir.path());
 
         let (mut raw, path) = read_raw_config(&state).unwrap();
@@ -505,7 +507,10 @@ mod tests {
         let state = make_test_app_state(&config_path.display().to_string(), dir.path());
 
         let (mut raw, path) = read_raw_config(&state).unwrap();
-        raw["render_profiles"].as_object_mut().unwrap().remove("tiktok");
+        raw["render_profiles"]
+            .as_object_mut()
+            .unwrap()
+            .remove("tiktok");
         write_raw_config(&raw, &path, &state).unwrap();
 
         let content = std::fs::read_to_string(&config_path).unwrap();
@@ -518,7 +523,11 @@ mod tests {
     fn rename_profile_moves_value() {
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("config.json");
-        std::fs::write(&config_path, r#"{"config_version":1,"render_profiles":{"old":{"width":1080}}}"#).unwrap();
+        std::fs::write(
+            &config_path,
+            r#"{"config_version":1,"render_profiles":{"old":{"width":1080}}}"#,
+        )
+        .unwrap();
         let state = make_test_app_state(&config_path.display().to_string(), dir.path());
 
         let (mut raw, path) = read_raw_config(&state).unwrap();
@@ -537,14 +546,18 @@ mod tests {
     fn save_profile_preserves_unknown_fields() {
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("config.json");
-        std::fs::write(&config_path, r#"{"config_version":1,"custom_field":"preserved","render_profiles":{}}"#).unwrap();
+        std::fs::write(
+            &config_path,
+            r#"{"config_version":1,"custom_field":"preserved","render_profiles":{}}"#,
+        )
+        .unwrap();
         let state = make_test_app_state(&config_path.display().to_string(), dir.path());
 
         let (mut raw, path) = read_raw_config(&state).unwrap();
-        raw["render_profiles"].as_object_mut().unwrap().insert(
-            "new".to_string(),
-            serde_json::json!({"width": 1080}),
-        );
+        raw["render_profiles"]
+            .as_object_mut()
+            .unwrap()
+            .insert("new".to_string(), serde_json::json!({"width": 1080}));
         write_raw_config(&raw, &path, &state).unwrap();
 
         let content = std::fs::read_to_string(&config_path).unwrap();
@@ -556,10 +569,7 @@ mod tests {
 
 /// Save render stage (pre-render items) to disk (app data dir).
 #[tauri::command]
-pub fn save_render_stage(
-    stage_json: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub fn save_render_stage(stage_json: String, state: State<'_, AppState>) -> Result<(), String> {
     let path = state.app_data_dir.join("render-stage.json");
     std::fs::write(&path, &stage_json).map_err(|e| e.to_string())
 }
@@ -567,9 +577,7 @@ pub fn save_render_stage(
 /// Load render stage from disk (app data dir). Returns empty array if not found.
 /// Migrates from old render-queue.json if render-stage.json doesn't exist.
 #[tauri::command]
-pub fn load_render_stage(
-    state: State<'_, AppState>,
-) -> Result<String, String> {
+pub fn load_render_stage(state: State<'_, AppState>) -> Result<String, String> {
     let stage_path = state.app_data_dir.join("render-stage.json");
     if stage_path.is_file() {
         return std::fs::read_to_string(&stage_path).map_err(|e| e.to_string());

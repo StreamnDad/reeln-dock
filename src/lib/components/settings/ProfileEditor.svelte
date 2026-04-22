@@ -1,5 +1,7 @@
 <script lang="ts">
   import { open } from "@tauri-apps/plugin-dialog";
+  import HelpLink from "$lib/components/HelpLink.svelte";
+  import { help } from "$lib/help";
   import type { RenderProfile, SpeedSegment } from "$lib/types/config";
 
   interface Props {
@@ -121,7 +123,7 @@
 
       <div class="grid grid-cols-2 gap-3">
         <div>
-          <label class="block text-xs text-text-muted mb-1" for="profile-width">Width</label>
+          <label class="block text-xs text-text-muted mb-1" for="profile-width">Width <HelpLink {...help["profile.width"]} /></label>
           <input
             id="profile-width"
             type="number"
@@ -147,7 +149,7 @@
         </div>
 
         <div>
-          <label class="block text-xs text-text-muted mb-1" for="profile-height">Height</label>
+          <label class="block text-xs text-text-muted mb-1" for="profile-height">Height <HelpLink {...help["profile.height"]} /></label>
           <input
             id="profile-height"
             type="number"
@@ -175,7 +177,7 @@
 
       <!-- Crop Mode -->
       <div>
-        <label class="block text-xs text-text-muted mb-1">Crop Mode</label>
+        <label class="block text-xs text-text-muted mb-1">Crop Mode <HelpLink {...help["profile.crop_mode"]} /></label>
         <div class="flex gap-1">
           {#each [{ value: "pad", label: "Pad (letterbox)" }, { value: "crop", label: "Crop (fill)" }] as option}
             <button
@@ -196,7 +198,7 @@
       {#if profile.crop_mode === "crop"}
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="block text-xs text-text-muted mb-1" for="anchor-x">Anchor X: {(profile.anchor_x ?? 0.5).toFixed(2)}</label>
+            <label class="block text-xs text-text-muted mb-1" for="anchor-x">Anchor X: {(profile.anchor_x ?? 0.5).toFixed(2)} <HelpLink {...help["profile.anchor_x"]} /></label>
             <input
               id="anchor-x"
               type="range"
@@ -209,7 +211,7 @@
             />
           </div>
           <div>
-            <label class="block text-xs text-text-muted mb-1" for="anchor-y">Anchor Y: {(profile.anchor_y ?? 0.5).toFixed(2)}</label>
+            <label class="block text-xs text-text-muted mb-1" for="anchor-y">Anchor Y: {(profile.anchor_y ?? 0.5).toFixed(2)} <HelpLink {...help["profile.anchor_y"]} /></label>
             <input
               id="anchor-y"
               type="range"
@@ -227,7 +229,7 @@
       <!-- Pad Color (pad mode only) -->
       {#if profile.crop_mode === "pad"}
         <div class="flex items-center gap-2">
-          <label class="text-xs text-text-muted" for="pad-color">Pad Color</label>
+          <label class="text-xs text-text-muted" for="pad-color">Pad Color <HelpLink {...help["profile.pad_color"]} /></label>
           <input
             id="pad-color"
             type="color"
@@ -246,7 +248,7 @@
 
       <!-- Scale -->
       <div>
-        <label class="block text-xs text-text-muted mb-1" for="profile-scale">Scale: {(profile.scale ?? 1.0).toFixed(1)}</label>
+        <label class="block text-xs text-text-muted mb-1" for="profile-scale">Scale: {(profile.scale ?? 1.0).toFixed(1)} <HelpLink {...help["profile.scale"]} /></label>
         <div class="flex items-center gap-2">
           <input
             id="profile-scale"
@@ -266,7 +268,7 @@
   <!-- Playback / Speed -->
   <div class="bg-surface rounded-lg border border-border p-4 space-y-3">
     <div class="flex items-center justify-between">
-      <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">Playback</h3>
+      <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">Playback <HelpLink {...help["profile.speed_segments"]} /></h3>
       {#if !useSegments}
         <button
           class="text-[10px] text-text-muted hover:text-text transition-colors"
@@ -350,7 +352,7 @@
     {:else}
       <!-- Simple uniform speed slider -->
       <div>
-        <label class="block text-xs text-text-muted mb-1" for="profile-speed">Speed: {(profile.speed ?? 1.0).toFixed(1)}x</label>
+        <label class="block text-xs text-text-muted mb-1" for="profile-speed">Speed: {(profile.speed ?? 1.0).toFixed(1)}x <HelpLink {...help["profile.speed"]} /></label>
         <div class="flex items-center gap-2">
           <input
             id="profile-speed"
@@ -373,7 +375,7 @@
     <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">Color</h3>
 
     <div>
-      <label class="block text-xs text-text-muted mb-1" for="profile-lut">LUT File</label>
+      <label class="block text-xs text-text-muted mb-1" for="profile-lut">LUT File <HelpLink {...help["profile.lut"]} /></label>
       <div class="flex items-center gap-2">
         <input
           id="profile-lut"
@@ -411,7 +413,7 @@
       <div class="px-4 pb-4 space-y-3">
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="block text-xs text-text-muted mb-1" for="profile-codec">Codec</label>
+            <label class="block text-xs text-text-muted mb-1" for="profile-codec">Codec <HelpLink {...help["profile.codec"]} /></label>
             <select
               id="profile-codec"
               value={profile.codec ?? ""}
@@ -424,7 +426,7 @@
             </select>
           </div>
           <div>
-            <label class="block text-xs text-text-muted mb-1" for="profile-preset">Preset</label>
+            <label class="block text-xs text-text-muted mb-1" for="profile-preset">Preset <HelpLink {...help["profile.preset"]} /></label>
             <select
               id="profile-preset"
               value={profile.preset ?? ""}
@@ -441,7 +443,7 @@
 
         <div>
           <label class="block text-xs text-text-muted mb-1" for="profile-crf">
-            CRF: {profile.crf ?? "default"}
+            CRF: {profile.crf ?? "default"} <HelpLink {...help["profile.crf"]} />
             {#if profile.crf !== undefined}
               <span class="text-[10px] ml-1">
                 ({profile.crf <= 15 ? "high quality" : profile.crf <= 23 ? "good" : profile.crf <= 35 ? "moderate" : "low quality"})
@@ -465,7 +467,7 @@
 
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="block text-xs text-text-muted mb-1" for="profile-audio-codec">Audio Codec</label>
+            <label class="block text-xs text-text-muted mb-1" for="profile-audio-codec">Audio Codec <HelpLink {...help["profile.audio_codec"]} /></label>
             <select
               id="profile-audio-codec"
               value={profile.audio_codec ?? ""}
@@ -478,7 +480,7 @@
             </select>
           </div>
           <div>
-            <label class="block text-xs text-text-muted mb-1" for="profile-audio-bitrate">Audio Bitrate</label>
+            <label class="block text-xs text-text-muted mb-1" for="profile-audio-bitrate">Audio Bitrate <HelpLink {...help["profile.audio_bitrate"]} /></label>
             <select
               id="profile-audio-bitrate"
               value={profile.audio_bitrate ?? ""}
@@ -498,7 +500,7 @@
 
   <!-- Overlay Template -->
   <div class="bg-surface rounded-lg border border-border p-4 space-y-3">
-    <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">Overlay Template</h3>
+    <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">Overlay Template <HelpLink {...help["profile.overlay_template"]} /></h3>
     <div>
       <label class="block text-xs text-text-muted mb-1" for="profile-subtitle">Template File Path</label>
       <input
@@ -517,7 +519,7 @@
   <div class="bg-surface rounded-lg border border-border p-4">
     <label class="flex items-center gap-2 text-sm text-text-muted cursor-not-allowed opacity-50" title="Smart Zoom requires the OpenAI plugin">
       <input type="checkbox" checked={profile.smart ?? false} disabled class="accent-secondary" />
-      Smart Zoom
+      Smart Zoom <HelpLink {...help["profile.smart_zoom"]} />
       <span class="text-[10px]">(requires OpenAI plugin)</span>
     </label>
   </div>

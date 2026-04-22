@@ -159,6 +159,35 @@ export async function quickTagEvent(
   });
 }
 
+export async function updateGameInfo(
+  gameDir: string,
+  field: string,
+  value: string,
+): Promise<GameState> {
+  return invoke<GameState>("update_game_info", { gameDir, field, value });
+}
+
+export async function setGameLivestream(
+  gameDir: string,
+  platform: string,
+  url: string,
+): Promise<GameState> {
+  return invoke<GameState>("set_game_livestream", { gameDir, platform, url });
+}
+
+export async function removeGameLivestream(
+  gameDir: string,
+  platform: string,
+): Promise<GameState> {
+  return invoke<GameState>("remove_game_livestream", { gameDir, platform });
+}
+
+export async function discoverGameImage(
+  gameDir: string,
+): Promise<string | null> {
+  return invoke<string | null>("discover_game_image", { gameDir });
+}
+
 export async function detectReelnCli(): Promise<string> {
   return invoke<string>("detect_reeln_cli");
 }

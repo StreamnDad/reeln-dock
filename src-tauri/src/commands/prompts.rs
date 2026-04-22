@@ -112,10 +112,7 @@ pub fn save_prompt_template(
 }
 
 /// Inner helper for get_prompt_template (avoids passing State through invoke).
-fn get_prompt_template_inner(
-    name: String,
-    state: &AppState,
-) -> Result<PromptTemplateInfo, String> {
+fn get_prompt_template_inner(name: String, state: &AppState) -> Result<PromptTemplateInfo, String> {
     let dir = find_prompt_templates_dir(state)
         .ok_or_else(|| "Prompt templates directory not found".to_string())?;
 
@@ -146,8 +143,10 @@ mod tests {
         let config_file = config_dir.join("config.json");
         std::fs::write(&config_file, "{}").unwrap();
 
-        let mut settings = DockSettings::default();
-        settings.reeln_config_path = Some(config_file.display().to_string());
+        let settings = DockSettings {
+            reeln_config_path: Some(config_file.display().to_string()),
+            ..Default::default()
+        };
 
         AppState {
             config: Mutex::new(None),
@@ -195,11 +194,7 @@ mod tests {
 
         let templates_dir = dir.path().join("config").join("prompt_templates");
         std::fs::create_dir_all(&templates_dir).unwrap();
-        std::fs::write(
-            templates_dir.join("greeting.txt"),
-            "  Hello {{name}}!  \n",
-        )
-        .unwrap();
+        std::fs::write(templates_dir.join("greeting.txt"), "  Hello {{name}}!  \n").unwrap();
 
         let result = get_prompt_template_inner("greeting".to_string(), &state).unwrap();
         assert_eq!(result.name, "greeting");
@@ -244,8 +239,7 @@ mod tests {
 
         let result = get_prompt_template_inner("anything".to_string(), &state);
         // May or may not error depending on workspace fallback — but if no dir found, it errors
-        if result.is_err() {
-            let err = result.unwrap_err();
+        if let Err(err) = result {
             assert!(
                 err.contains("not found") || err.contains("directory not found"),
                 "Unexpected error: {err}"

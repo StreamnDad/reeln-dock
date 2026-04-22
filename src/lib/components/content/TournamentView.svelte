@@ -105,7 +105,7 @@
     startDrag(game.dir_path, label, e.clientX, e.clientY);
   }
 
-  function handleCardClick(dirPath: string) {
+  function handleCardClick(_dirPath: string) {
     if (dragActive) return;
     // TODO: wire up game selection via context
   }

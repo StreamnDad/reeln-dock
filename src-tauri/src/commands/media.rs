@@ -140,16 +140,19 @@ pub fn get_proxy_cache_stats(state: State<'_, AppState>) -> ProxyCacheStats {
 
     if let Ok(entries) = std::fs::read_dir(&proxy_dir) {
         for entry in entries.flatten() {
-            if let Ok(meta) = entry.metadata() {
-                if meta.is_file() {
-                    file_count += 1;
-                    total_bytes += meta.len();
-                }
+            if let Ok(meta) = entry.metadata()
+                && meta.is_file()
+            {
+                file_count += 1;
+                total_bytes += meta.len();
             }
         }
     }
 
-    ProxyCacheStats { file_count, total_bytes }
+    ProxyCacheStats {
+        file_count,
+        total_bytes,
+    }
 }
 
 /// Clear all proxy cache files.

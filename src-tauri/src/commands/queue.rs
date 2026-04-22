@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::orchestration::hook_executor;
 use crate::state::AppState;
@@ -153,10 +153,10 @@ fn read_queue_index() -> Result<Vec<String>, String> {
     if !path.is_file() {
         return Ok(Vec::new());
     }
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read queue index: {e}"))?;
-    let index: QueueIndex = serde_json::from_str(&content)
-        .map_err(|e| format!("Invalid queue index: {e}"))?;
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| format!("Failed to read queue index: {e}"))?;
+    let index: QueueIndex =
+        serde_json::from_str(&content).map_err(|e| format!("Invalid queue index: {e}"))?;
     Ok(index.queues)
 }
 
@@ -241,9 +241,7 @@ pub fn queue_list(
 
 /// List queue items across all games (via central queue index).
 #[tauri::command]
-pub fn queue_list_all(
-    status_filter: Option<String>,
-) -> Result<Vec<CliQueueItem>, String> {
+pub fn queue_list_all(status_filter: Option<String>) -> Result<Vec<CliQueueItem>, String> {
     let game_dirs = read_queue_index()?;
     let mut all_items = Vec::new();
 
@@ -273,10 +271,7 @@ pub fn queue_list_all(
 
 /// Get a single queue item by ID or prefix.
 #[tauri::command]
-pub fn queue_show(
-    game_dir: String,
-    item_id: String,
-) -> Result<CliQueueItem, String> {
+pub fn queue_show(game_dir: String, item_id: String) -> Result<CliQueueItem, String> {
     let queue = read_queue_file(Path::new(&game_dir))?;
 
     // Exact match first
@@ -312,19 +307,23 @@ pub fn queue_show(
 /// List available publish targets from loaded plugins.
 #[tauri::command]
 pub async fn queue_targets(
+    app: AppHandle,
     state: State<'_, AppState>,
     config_path: Option<String>,
     profile: Option<String>,
 ) -> Result<Vec<String>, String> {
     let cli_path = resolve_cli_path(&state)?;
 
+    let app_clone = app.clone();
     tokio::task::spawn_blocking(move || {
+        crate::dock_log::log_cli_command(&app_clone, "Queue", &cli_path, &["queue", "targets"]);
         let output = run_queue_cli_with_profile(
             &cli_path,
             &["targets"],
             config_path.as_deref(),
             profile.as_deref(),
         )?;
+        crate::dock_log::log_cli_output(&app_clone, "Queue", &output);
         check_cli_output(&output)?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -342,6 +341,7 @@ pub async fn queue_targets(
 /// Edit title/description of a queue item.
 #[tauri::command]
 pub async fn queue_edit(
+    app: AppHandle,
     state: State<'_, AppState>,
     game_dir: String,
     item_id: String,
@@ -350,6 +350,7 @@ pub async fn queue_edit(
 ) -> Result<CliQueueItem, String> {
     let cli_path = resolve_cli_path(&state)?;
 
+    let app_clone = app.clone();
     tokio::task::spawn_blocking(move || {
         let mut args = vec!["edit", &item_id];
         let title_flag;
@@ -368,7 +369,12 @@ pub async fn queue_edit(
         args.push("--game-dir");
         args.push(&game_dir);
 
+        let log_args: Vec<&str> = std::iter::once("queue")
+            .chain(args.iter().copied())
+            .collect();
+        crate::dock_log::log_cli_command(&app_clone, "Queue", &cli_path, &log_args);
         let output = run_queue_cli(&cli_path, &args, None)?;
+        crate::dock_log::log_cli_output(&app_clone, "Queue", &output);
         check_cli_output(&output)?;
 
         // Re-read the updated item
@@ -386,6 +392,7 @@ pub async fn queue_edit(
 /// Publish a queue item to target(s).
 #[tauri::command]
 pub async fn queue_publish(
+    app: AppHandle,
     state: State<'_, AppState>,
     game_dir: String,
     item_id: String,
@@ -394,6 +401,7 @@ pub async fn queue_publish(
 ) -> Result<CliQueueItem, String> {
     let cli_path = resolve_cli_path(&state)?;
 
+    let app_clone = app.clone();
     tokio::task::spawn_blocking(move || {
         // Read the item's stored config_profile for --profile
         let stored_profile = read_queue_file(Path::new(&game_dir))
@@ -417,12 +425,17 @@ pub async fn queue_publish(
             args.push(&target_ref);
         }
 
+        let log_args: Vec<&str> = std::iter::once("queue")
+            .chain(args.iter().copied())
+            .collect();
+        crate::dock_log::log_cli_command(&app_clone, "Queue", &cli_path, &log_args);
         let output = run_queue_cli_with_profile(
             &cli_path,
             &args,
             config_path.as_deref(),
             stored_profile.as_deref(),
         )?;
+        crate::dock_log::log_cli_output(&app_clone, "Queue", &output);
         check_cli_output(&output)?;
 
         // Re-read the updated item
@@ -440,18 +453,25 @@ pub async fn queue_publish(
 /// Publish all rendered items in a game's queue.
 #[tauri::command]
 pub async fn queue_publish_all(
+    app: AppHandle,
     state: State<'_, AppState>,
     game_dir: String,
     config_path: Option<String>,
 ) -> Result<Vec<CliQueueItem>, String> {
     let cli_path = resolve_cli_path(&state)?;
 
+    let app_clone = app.clone();
     tokio::task::spawn_blocking(move || {
         let mut args = vec!["publish-all"];
         args.push("--game-dir");
         args.push(&game_dir);
 
+        let log_args: Vec<&str> = std::iter::once("queue")
+            .chain(args.iter().copied())
+            .collect();
+        crate::dock_log::log_cli_command(&app_clone, "Queue", &cli_path, &log_args);
         let output = run_queue_cli(&cli_path, &args, config_path.as_deref())?;
+        crate::dock_log::log_cli_output(&app_clone, "Queue", &output);
         check_cli_output(&output)?;
 
         // Re-read the full queue
@@ -469,15 +489,22 @@ pub async fn queue_publish_all(
 /// Soft-delete a queue item.
 #[tauri::command]
 pub async fn queue_remove(
+    app: AppHandle,
     state: State<'_, AppState>,
     game_dir: String,
     item_id: String,
 ) -> Result<CliQueueItem, String> {
     let cli_path = resolve_cli_path(&state)?;
 
+    let app_clone = app.clone();
     tokio::task::spawn_blocking(move || {
         let args = vec!["remove", &item_id, "--game-dir", &game_dir];
+        let log_args: Vec<&str> = std::iter::once("queue")
+            .chain(args.iter().copied())
+            .collect();
+        crate::dock_log::log_cli_command(&app_clone, "Queue", &cli_path, &log_args);
         let output = run_queue_cli(&cli_path, &args, None)?;
+        crate::dock_log::log_cli_output(&app_clone, "Queue", &output);
         check_cli_output(&output)?;
 
         // Re-read the removed item
@@ -652,11 +679,8 @@ mod tests {
         )
         .unwrap();
 
-        let item = queue_show(
-            dir.path().to_str().unwrap().to_string(),
-            "abcd".to_string(),
-        )
-        .unwrap();
+        let item =
+            queue_show(dir.path().to_str().unwrap().to_string(), "abcd".to_string()).unwrap();
         assert_eq!(item.title, "Found");
     }
 
@@ -672,10 +696,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = queue_show(
-            dir.path().to_str().unwrap().to_string(),
-            "abcd".to_string(),
-        );
+        let result = queue_show(dir.path().to_str().unwrap().to_string(), "abcd".to_string());
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Ambiguous"));
     }
@@ -689,10 +710,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = queue_show(
-            dir.path().to_str().unwrap().to_string(),
-            "nope".to_string(),
-        );
+        let result = queue_show(dir.path().to_str().unwrap().to_string(), "nope".to_string());
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not found"));
     }
@@ -716,7 +734,7 @@ mod tests {
 
     #[test]
     fn test_check_cli_output_success() {
-        let output = std::process::Output {
+        let _output = std::process::Output {
             status: std::process::ExitStatus::default(),
             stdout: b"ok".to_vec(),
             stderr: Vec::new(),
@@ -762,12 +780,7 @@ mod tests {
         let script = dir.join("fake_reeln.sh");
         let mut f = std::fs::File::create(&script).unwrap();
         writeln!(f, "#!/bin/sh").unwrap();
-        writeln!(
-            f,
-            "printf '%s\\n' \"$@\" > \"{}\"",
-            args_file.display()
-        )
-        .unwrap();
+        writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -785,7 +798,14 @@ mod tests {
 
         let _output = run_queue_cli(
             cli_path,
-            &["edit", "abc123", "--title", "New Title", "--game-dir", "/game"],
+            &[
+                "edit",
+                "abc123",
+                "--title",
+                "New Title",
+                "--game-dir",
+                "/game",
+            ],
             None,
         )
         .unwrap();
@@ -798,7 +818,15 @@ mod tests {
 
         assert_eq!(
             args,
-            vec!["queue", "edit", "abc123", "--title", "New Title", "--game-dir", "/game"]
+            vec![
+                "queue",
+                "edit",
+                "abc123",
+                "--title",
+                "New Title",
+                "--game-dir",
+                "/game"
+            ]
         );
     }
 
@@ -811,7 +839,14 @@ mod tests {
 
         let _output = run_queue_cli(
             cli_path,
-            &["publish", "abc123", "--game-dir", "/game", "--target", "google"],
+            &[
+                "publish",
+                "abc123",
+                "--game-dir",
+                "/game",
+                "--target",
+                "google",
+            ],
             Some("/config.json"),
         )
         .unwrap();
@@ -825,8 +860,15 @@ mod tests {
         assert_eq!(
             args,
             vec![
-                "queue", "publish", "abc123", "--game-dir", "/game",
-                "--target", "google", "--config", "/config.json"
+                "queue",
+                "publish",
+                "abc123",
+                "--game-dir",
+                "/game",
+                "--target",
+                "google",
+                "--config",
+                "/config.json"
             ]
         );
     }
@@ -838,12 +880,8 @@ mod tests {
         let script = make_arg_dump_script(dir.path(), &args_file);
         let cli_path = script.to_str().unwrap();
 
-        let _output = run_queue_cli(
-            cli_path,
-            &["remove", "abc123", "--game-dir", "/game"],
-            None,
-        )
-        .unwrap();
+        let _output =
+            run_queue_cli(cli_path, &["remove", "abc123", "--game-dir", "/game"], None).unwrap();
 
         let args: Vec<String> = std::fs::read_to_string(&args_file)
             .unwrap()
@@ -851,7 +889,10 @@ mod tests {
             .map(|l| l.to_string())
             .collect();
 
-        assert_eq!(args, vec!["queue", "remove", "abc123", "--game-dir", "/game"]);
+        assert_eq!(
+            args,
+            vec!["queue", "remove", "abc123", "--game-dir", "/game"]
+        );
     }
 
     #[test]
@@ -861,12 +902,7 @@ mod tests {
         let script = make_arg_dump_script(dir.path(), &args_file);
         let cli_path = script.to_str().unwrap();
 
-        let _output = run_queue_cli(
-            cli_path,
-            &["targets"],
-            Some("/my/config.json"),
-        )
-        .unwrap();
+        let _output = run_queue_cli(cli_path, &["targets"], Some("/my/config.json")).unwrap();
 
         let args: Vec<String> = std::fs::read_to_string(&args_file)
             .unwrap()
@@ -874,7 +910,10 @@ mod tests {
             .map(|l| l.to_string())
             .collect();
 
-        assert_eq!(args, vec!["queue", "targets", "--config", "/my/config.json"]);
+        assert_eq!(
+            args,
+            vec!["queue", "targets", "--config", "/my/config.json"]
+        );
     }
 
     #[test]
@@ -884,12 +923,8 @@ mod tests {
         let script = make_arg_dump_script(dir.path(), &args_file);
         let cli_path = script.to_str().unwrap();
 
-        let _output = run_queue_cli(
-            cli_path,
-            &["publish-all", "--game-dir", "/game"],
-            None,
-        )
-        .unwrap();
+        let _output =
+            run_queue_cli(cli_path, &["publish-all", "--game-dir", "/game"], None).unwrap();
 
         let args: Vec<String> = std::fs::read_to_string(&args_file)
             .unwrap()

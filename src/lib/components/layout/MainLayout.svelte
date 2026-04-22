@@ -13,12 +13,13 @@
   import { setGames } from "$lib/stores/games";
   import type { GameSummary } from "$lib/types/game";
   import type { TeamProfile } from "$lib/types/team";
-  import { listGames, setGameTournament, getGameState, getEventTypes } from "$lib/ipc/games";
+  import { listGames, getGameState, getEventTypes } from "$lib/ipc/games";
   import { listTeamLevels, listTeamProfiles } from "$lib/ipc/teams";
   import { moveDrag, endDrag, cancelDrag } from "$lib/stores/drag.svelte";
   import { initJobListener } from "$lib/stores/jobs.svelte";
   import { initQueue } from "$lib/stores/renderQueue.svelte";
   import { initPluginUI } from "$lib/stores/pluginUI.svelte";
+  import { initLogListener } from "$lib/stores/log.svelte";
   import { loadTournamentMetadata, isArchived } from "$lib/stores/tournaments.svelte";
   import { loadAllTeams } from "$lib/stores/teams.svelte";
   import { settingsTeamTarget, settingsTournamentTarget, editingQueueItem } from "$lib/stores/navigation";
@@ -114,6 +115,7 @@
   }
 
   $effect(() => {
+    initLogListener().catch((e) => log.error("Logs", `Failed to init listener: ${e}`));
     initJobListener().catch((e) => log.error("Jobs", `Failed to init listener: ${e}`));
     initQueue().catch((e) => log.error("RenderQueue", `Failed to load queue: ${e}`));
     initPluginUI().catch((e) => log.error("PluginUI", `Failed to init: ${e}`));

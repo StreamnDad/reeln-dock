@@ -13,6 +13,9 @@ import {
   pruneGameExecute,
   deleteGamePreview,
   deleteGame,
+  updateGameInfo,
+  setGameLivestream,
+  removeGameLivestream,
 } from "./games";
 
 const mockInvoke = invoke as Mock;
@@ -113,5 +116,46 @@ describe("deleteGame", () => {
     mockInvoke.mockResolvedValue(undefined);
     await deleteGame("/games/g1");
     expect(mockInvoke).toHaveBeenCalledWith("delete_game", { gameDir: "/games/g1" });
+  });
+});
+
+describe("updateGameInfo", () => {
+  it("passes gameDir, field, and value", async () => {
+    const state = { game_info: { venue: "Main Arena" } };
+    mockInvoke.mockResolvedValue(state);
+    const result = await updateGameInfo("/games/g1", "venue", "Main Arena");
+    expect(mockInvoke).toHaveBeenCalledWith("update_game_info", {
+      gameDir: "/games/g1",
+      field: "venue",
+      value: "Main Arena",
+    });
+    expect(result).toEqual(state);
+  });
+});
+
+describe("setGameLivestream", () => {
+  it("passes gameDir, platform, and url", async () => {
+    const state = { livestreams: { youtube: "https://youtube.com/live/123" } };
+    mockInvoke.mockResolvedValue(state);
+    const result = await setGameLivestream("/games/g1", "youtube", "https://youtube.com/live/123");
+    expect(mockInvoke).toHaveBeenCalledWith("set_game_livestream", {
+      gameDir: "/games/g1",
+      platform: "youtube",
+      url: "https://youtube.com/live/123",
+    });
+    expect(result).toEqual(state);
+  });
+});
+
+describe("removeGameLivestream", () => {
+  it("passes gameDir and platform", async () => {
+    const state = { livestreams: {} };
+    mockInvoke.mockResolvedValue(state);
+    const result = await removeGameLivestream("/games/g1", "youtube");
+    expect(mockInvoke).toHaveBeenCalledWith("remove_game_livestream", {
+      gameDir: "/games/g1",
+      platform: "youtube",
+    });
+    expect(result).toEqual(state);
   });
 });

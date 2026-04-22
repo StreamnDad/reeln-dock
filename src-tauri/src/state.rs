@@ -70,7 +70,7 @@ pub struct RenderingDefaults {
 
 /// Dock-specific settings, stored separately from the reeln config.
 /// Lives in Tauri's app data dir (e.g. ~/Library/Application Support/dad.streamn.reeln-dock/).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DockSettings {
     /// Path to the reeln config file (read-only reference).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -87,18 +87,6 @@ pub struct DockSettings {
     /// Rendering default preferences (iteration mappings, default profile, etc.).
     #[serde(default)]
     pub rendering: RenderingDefaults,
-}
-
-impl Default for DockSettings {
-    fn default() -> Self {
-        Self {
-            reeln_config_path: None,
-            plugin_profiles: std::collections::HashMap::new(),
-            display: DisplayPreferences::default(),
-            reeln_cli_path: None,
-            rendering: RenderingDefaults::default(),
-        }
-    }
 }
 
 impl DockSettings {
@@ -139,14 +127,14 @@ impl AppState {
     /// If `reeln_config_path` is set (e.g. `~/.config/reeln/config/config.json`),
     /// returns its parent directory. Otherwise falls back to `reeln_config::config_dir()`.
     pub fn effective_config_dir(&self) -> PathBuf {
-        if let Ok(settings) = self.dock_settings.lock() {
-            if let Some(ref config_path) = settings.reeln_config_path {
-                let p = Path::new(config_path);
-                if let Some(parent) = p.parent() {
-                    if parent.is_dir() {
-                        return parent.to_path_buf();
-                    }
-                }
+        if let Ok(settings) = self.dock_settings.lock()
+            && let Some(ref config_path) = settings.reeln_config_path
+        {
+            let p = Path::new(config_path);
+            if let Some(parent) = p.parent()
+                && parent.is_dir()
+            {
+                return parent.to_path_buf();
             }
         }
         reeln_config::config_dir()
@@ -190,29 +178,49 @@ mod tests {
     #[test]
     fn dock_settings_save_load_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
-        let mut settings = DockSettings::default();
-        settings.reeln_config_path = Some("/some/path/config.json".to_string());
-        settings.reeln_cli_path = Some("/usr/local/bin/reeln".to_string());
-        settings.rendering.default_profile = Some("hd".to_string());
-        settings.rendering.concat_by_default = true;
-        settings.rendering.overrides.scale = Some(0.5);
-        settings.rendering.overrides.speed = Some(1.5);
-        settings.rendering.overrides.smart = Some(true);
-        settings.rendering.overrides.crop_mode = Some("center".to_string());
-        settings.display.show_logos = false;
+        let settings = DockSettings {
+            reeln_config_path: Some("/some/path/config.json".to_string()),
+            reeln_cli_path: Some("/usr/local/bin/reeln".to_string()),
+            rendering: RenderingDefaults {
+                default_profile: Some("hd".to_string()),
+                concat_by_default: true,
+                overrides: RenderOverrideDefaults {
+                    scale: Some(0.5),
+                    speed: Some(1.5),
+                    smart: Some(true),
+                    crop_mode: Some("center".to_string()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            display: DisplayPreferences {
+                show_logos: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
         let saved_path = settings.save(dir.path()).unwrap();
         assert!(saved_path.exists());
 
         let loaded = DockSettings::load(dir.path()).expect("should load saved settings");
-        assert_eq!(loaded.reeln_config_path.as_deref(), Some("/some/path/config.json"));
-        assert_eq!(loaded.reeln_cli_path.as_deref(), Some("/usr/local/bin/reeln"));
+        assert_eq!(
+            loaded.reeln_config_path.as_deref(),
+            Some("/some/path/config.json")
+        );
+        assert_eq!(
+            loaded.reeln_cli_path.as_deref(),
+            Some("/usr/local/bin/reeln")
+        );
         assert_eq!(loaded.rendering.default_profile.as_deref(), Some("hd"));
         assert!(loaded.rendering.concat_by_default);
         assert_eq!(loaded.rendering.overrides.scale, Some(0.5));
         assert_eq!(loaded.rendering.overrides.speed, Some(1.5));
         assert_eq!(loaded.rendering.overrides.smart, Some(true));
-        assert_eq!(loaded.rendering.overrides.crop_mode.as_deref(), Some("center"));
+        assert_eq!(
+            loaded.rendering.overrides.crop_mode.as_deref(),
+            Some("center")
+        );
         assert!(!loaded.display.show_logos);
     }
 
@@ -242,8 +250,10 @@ mod tests {
         std::fs::create_dir_all(&config_dir).unwrap();
         let config_file = config_dir.join("config.json");
 
-        let mut settings = DockSettings::default();
-        settings.reeln_config_path = Some(config_file.to_string_lossy().to_string());
+        let settings = DockSettings {
+            reeln_config_path: Some(config_file.to_string_lossy().to_string()),
+            ..Default::default()
+        };
 
         let state = AppState {
             config: Mutex::new(None),

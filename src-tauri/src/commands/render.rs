@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
-
 use crate::orchestration::{hook_executor, progress::ProgressReporter, render_ops};
 use crate::state::AppState;
 
@@ -32,37 +31,37 @@ fn build_event_metadata(
     }
 
     // Event-specific metadata
-    if let Some(eid) = event_id {
-        if let Some(event) = state.events.iter().find(|e| e.id == eid) {
-            meta.insert("event_type".to_string(), event.event_type.clone());
-            meta.insert(
-                "segment_number".to_string(),
-                event.segment_number.to_string(),
-            );
-            // Include event metadata (e.g. team)
-            for (k, v) in &event.metadata {
-                if let Some(s) = v.as_str() {
-                    meta.insert(k.clone(), s.to_string());
-                }
+    if let Some(eid) = event_id
+        && let Some(event) = state.events.iter().find(|e| e.id == eid)
+    {
+        meta.insert("event_type".to_string(), event.event_type.clone());
+        meta.insert(
+            "segment_number".to_string(),
+            event.segment_number.to_string(),
+        );
+        // Include event metadata (e.g. team)
+        for (k, v) in &event.metadata {
+            if let Some(s) = v.as_str() {
+                meta.insert(k.clone(), s.to_string());
             }
         }
     }
 
     // Player data from explicit params (override event metadata)
-    if let Some(s) = scorer {
-        if !s.is_empty() {
-            meta.insert("player".to_string(), s.to_string());
-        }
+    if let Some(s) = scorer
+        && !s.is_empty()
+    {
+        meta.insert("player".to_string(), s.to_string());
     }
-    if let Some(a) = assist1 {
-        if !a.is_empty() {
-            meta.insert("assist1".to_string(), a.to_string());
-        }
+    if let Some(a) = assist1
+        && !a.is_empty()
+    {
+        meta.insert("assist1".to_string(), a.to_string());
     }
-    if let Some(a) = assist2 {
-        if !a.is_empty() {
-            meta.insert("assist2".to_string(), a.to_string());
-        }
+    if let Some(a) = assist2
+        && !a.is_empty()
+    {
+        meta.insert("assist2".to_string(), a.to_string());
     }
 
     Some(meta)
@@ -92,6 +91,7 @@ pub struct IterationItem {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn render_short(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -124,7 +124,10 @@ pub async fn render_short(
     if let (Some(cli), Some(gdir)) = (&cli_path, &game_dir) {
         // Use explicit config path (plugin profile) if provided, otherwise fall back to DockSettings
         let config_path = config_path.or_else(|| {
-            state.dock_settings.lock().ok()
+            state
+                .dock_settings
+                .lock()
+                .ok()
                 .and_then(|s| s.reeln_config_path.clone())
         });
 
@@ -132,7 +135,10 @@ pub async fn render_short(
         let event_type = event_id.as_deref().and_then(|eid| {
             let game_path = Path::new(gdir.as_str());
             reeln_state::load_game_state(game_path).ok().and_then(|s| {
-                s.events.iter().find(|e| e.id == eid).map(|e| e.event_type.clone())
+                s.events
+                    .iter()
+                    .find(|e| e.id == eid)
+                    .map(|e| e.event_type.clone())
             })
         });
 
@@ -159,6 +165,7 @@ pub async fn render_short(
         let pn = player_numbers.clone();
         let cli_owned = cli.clone();
         let et = event_type;
+        let app_clone = app.clone();
 
         let result = tokio::task::spawn_blocking(move || {
             let profile_names: [&str; 1] = [pname.as_str()];
@@ -181,6 +188,7 @@ pub async fn render_short(
                 no_branding: no_branding_flag,
                 output_path: None,
                 queue: queue_flag,
+                app_handle: Some(&app_clone),
             };
             render_ops::render_via_cli(&params)
         })
@@ -259,8 +267,7 @@ pub async fn render_short(
 
     if let Some(ref gdir) = gdir {
         let game_path = Path::new(gdir);
-        let mut game_state =
-            reeln_state::load_game_state(game_path).map_err(|e| e.to_string())?;
+        let mut game_state = reeln_state::load_game_state(game_path).map_err(|e| e.to_string())?;
         reeln_state::add_render(&mut game_state, entry.clone());
         reeln_state::save_game_state(&game_state, game_path).map_err(|e| e.to_string())?;
     }
@@ -269,6 +276,7 @@ pub async fn render_short(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn render_iteration(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -318,14 +326,20 @@ pub async fn render_iteration(
 
         // Use explicit config path (plugin profile) if provided, otherwise fall back to DockSettings
         let config_path = config_path.or_else(|| {
-            state.dock_settings.lock().ok()
+            state
+                .dock_settings
+                .lock()
+                .ok()
                 .and_then(|s| s.reeln_config_path.clone())
         });
 
         let event_type = event_id.as_deref().and_then(|eid| {
             let game_path = Path::new(gdir.as_str());
             reeln_state::load_game_state(game_path).ok().and_then(|s| {
-                s.events.iter().find(|e| e.id == eid).map(|e| e.event_type.clone())
+                s.events
+                    .iter()
+                    .find(|e| e.id == eid)
+                    .map(|e| e.event_type.clone())
             })
         });
 
@@ -343,14 +357,13 @@ pub async fn render_iteration(
         let et = event_type;
         let items_owned = items.clone();
         let cfg_path = config_path.clone();
+        let app_clone = app.clone();
 
         let result = tokio::task::spawn_blocking(move || {
             // Flatten profile names into owned strings so the slice we pass
             // to render_via_cli lives as long as the call.
-            let owned_names: Vec<String> = items_owned
-                .iter()
-                .map(|i| i.profile_name.clone())
-                .collect();
+            let owned_names: Vec<String> =
+                items_owned.iter().map(|i| i.profile_name.clone()).collect();
             let name_refs: Vec<&str> = owned_names.iter().map(|s| s.as_str()).collect();
 
             // Take overrides from the first item; all items share them in
@@ -390,6 +403,7 @@ pub async fn render_iteration(
                 no_branding: no_branding_flag,
                 output_path: None,
                 queue: queue_flag,
+                app_handle: Some(&app_clone),
             };
             render_ops::render_via_cli(&params)
         })
@@ -472,8 +486,7 @@ pub async fn render_iteration(
 
     if let Some(ref gdir) = gdir {
         let game_path = Path::new(gdir);
-        let mut game_state =
-            reeln_state::load_game_state(game_path).map_err(|e| e.to_string())?;
+        let mut game_state = reeln_state::load_game_state(game_path).map_err(|e| e.to_string())?;
         for entry in entries.clone() {
             reeln_state::add_render(&mut game_state, entry);
         }
@@ -507,11 +520,7 @@ pub async fn render_preview(
     profile_name: Option<String>,
 ) -> Result<String, String> {
     let backend = state.media_backend.clone();
-    let config = state
-        .config
-        .lock()
-        .map_err(|e| e.to_string())?
-        .clone();
+    let config = state.config.lock().map_err(|e| e.to_string())?.clone();
     let input = PathBuf::from(&input_clip);
     let out_dir = PathBuf::from(&output_dir);
     let pname = profile_name;
@@ -567,13 +576,19 @@ pub async fn render_reel(
     let reporter = ProgressReporter::new(app, job_id);
 
     let result = tokio::task::spawn_blocking(move || {
-        render_ops::render_reel(&backend, &config, &short_paths, &output_path, Some(&reporter))
+        render_ops::render_reel(
+            &backend,
+            &config,
+            &short_paths,
+            &output_path,
+            Some(&reporter),
+        )
     })
     .await
     .map_err(|e| e.to_string())?;
 
     let render_result = result?;
-    serde_json::to_value(&serde_json::json!({
+    serde_json::to_value(serde_json::json!({
         "output": render_result.output.display().to_string(),
         "duration_secs": render_result.duration_secs,
     }))
@@ -591,11 +606,7 @@ pub async fn render_profile_preview(
     profile: serde_json::Value,
 ) -> Result<String, String> {
     let backend = state.media_backend.clone();
-    let config = state
-        .config
-        .lock()
-        .map_err(|e| e.to_string())?
-        .clone();
+    let config = state.config.lock().map_err(|e| e.to_string())?.clone();
     let input = PathBuf::from(&input_clip);
     let out_dir = PathBuf::from(&output_dir);
 
@@ -613,7 +624,9 @@ pub async fn render_profile_preview(
                 Some(&reporter),
             )
         }))
-        .unwrap_or_else(|_| Err("Preview render crashed — try different profile settings".to_string()))
+        .unwrap_or_else(|_| {
+            Err("Preview render crashed — try different profile settings".to_string())
+        })
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -623,14 +636,8 @@ pub async fn render_profile_preview(
 
 /// Suggest a clip for preview by scanning recent games.
 #[tauri::command]
-pub fn suggest_preview_clip(
-    state: State<'_, AppState>,
-) -> Result<Option<String>, String> {
-    let config = state
-        .config
-        .lock()
-        .map_err(|e| e.to_string())?
-        .clone();
+pub fn suggest_preview_clip(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let config = state.config.lock().map_err(|e| e.to_string())?.clone();
 
     let config = match config {
         Some(c) => c,
@@ -671,9 +678,7 @@ pub fn suggest_preview_clip(
 }
 
 #[tauri::command]
-pub fn list_render_profiles(
-    state: State<'_, AppState>,
-) -> Result<Vec<serde_json::Value>, String> {
+pub fn list_render_profiles(state: State<'_, AppState>) -> Result<Vec<serde_json::Value>, String> {
     let config = state
         .config
         .lock()
@@ -745,14 +750,8 @@ mod tests {
         });
         reeln_state::save_game_state(&state, &game_dir).unwrap();
 
-        let meta = build_event_metadata(
-            game_dir.to_str().unwrap(),
-            Some("evt1"),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let meta = build_event_metadata(game_dir.to_str().unwrap(), Some("evt1"), None, None, None)
+            .unwrap();
 
         assert_eq!(meta.get("event_type").unwrap(), "goal");
         assert_eq!(meta.get("segment_number").unwrap(), "2");
@@ -781,14 +780,8 @@ mod tests {
         });
         reeln_state::save_game_state(&state, &game_dir).unwrap();
 
-        let meta = build_event_metadata(
-            game_dir.to_str().unwrap(),
-            Some("evt2"),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let meta = build_event_metadata(game_dir.to_str().unwrap(), Some("evt2"), None, None, None)
+            .unwrap();
 
         assert_eq!(meta.get("team").unwrap(), "home");
         // Non-string metadata value should not be present
@@ -940,10 +933,7 @@ mod tests {
             zoom_frames: Some(5),
             extra: {
                 let mut m = HashMap::new();
-                m.insert(
-                    "plugin_key".to_string(),
-                    serde_json::Value::Bool(true),
-                );
+                m.insert("plugin_key".to_string(), serde_json::Value::Bool(true));
                 m
             },
         };

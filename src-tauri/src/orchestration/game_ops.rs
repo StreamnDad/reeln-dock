@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use reeln_config::AppConfig;
 use reeln_media::{ConcatOptions, MediaBackend};
-use reeln_sport::{SportRegistry, segment_dir_name, make_segments};
+use reeln_sport::{SportRegistry, make_segments, segment_dir_name};
 use reeln_state::{GameInfo, GameState};
 
 use crate::commands::teams::slugify;
@@ -124,18 +124,14 @@ pub fn process_segment(
     }
 
     // Optionally collect replays from source_dir
-    if let Some(ref source_dir) = config.paths.source_dir {
-        if source_dir.exists() {
-            let _ = reeln_state::collect_replays(
-                source_dir,
-                &config.paths.source_glob,
-                &seg_dir,
-            );
-        }
+    if let Some(ref source_dir) = config.paths.source_dir
+        && source_dir.exists()
+    {
+        let _ = reeln_state::collect_replays(source_dir, &config.paths.source_glob, &seg_dir);
     }
 
-    let videos = reeln_state::find_segment_videos(&seg_dir, &seg_alias)
-        .map_err(|e| e.to_string())?;
+    let videos =
+        reeln_state::find_segment_videos(&seg_dir, &seg_alias).map_err(|e| e.to_string())?;
 
     if videos.is_empty() {
         return Err(format!("No videos found in {}", seg_dir.display()));
@@ -233,11 +229,7 @@ pub fn merge_highlights(
     }
 
     let highlights_output = game_dir.join("highlights.mp4");
-    let segment_paths: Vec<PathBuf> = state
-        .segment_outputs
-        .iter()
-        .map(PathBuf::from)
-        .collect();
+    let segment_paths: Vec<PathBuf> = state.segment_outputs.iter().map(PathBuf::from).collect();
     let segment_refs: Vec<&Path> = segment_paths.iter().map(|p| p.as_path()).collect();
 
     let opts = ConcatOptions {
@@ -333,9 +325,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let output_dir = tmp.path().to_path_buf();
 
-        let mut config = AppConfig::default();
-        config.paths = PathConfig {
-            output_dir: Some(output_dir.clone()),
+        let config = AppConfig {
+            paths: PathConfig {
+                output_dir: Some(output_dir.clone()),
+                ..Default::default()
+            },
             ..Default::default()
         };
 

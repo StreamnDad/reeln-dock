@@ -30,6 +30,9 @@ let selectedSegment_ = $state<number | null>(null);
 let selectedEventType_ = $state<string | null>(null);
 let eventsExpanded_ = $state(true);
 let rendersExpanded_ = $state(true);
+let metadataExpanded_ = $state(false);
+let livestreamsExpanded_ = $state(false);
+let stateInfoExpanded_ = $state(false);
 
 export function getSelectedSegment(): number | null { return selectedSegment_; }
 export function setSelectedSegment(v: number | null) { selectedSegment_ = v; }
@@ -42,3 +45,12 @@ export function setEventsExpanded(v: boolean) { eventsExpanded_ = v; }
 
 export function getRendersExpanded(): boolean { return rendersExpanded_; }
 export function setRendersExpanded(v: boolean) { rendersExpanded_ = v; }
+
+export function getMetadataExpanded(): boolean { return metadataExpanded_; }
+export function setMetadataExpanded(v: boolean) { metadataExpanded_ = v; }
+
+export function getLivestreamsExpanded(): boolean { return livestreamsExpanded_; }
+export function setLivestreamsExpanded(v: boolean) { livestreamsExpanded_ = v; }
+
+export function getStateInfoExpanded(): boolean { return stateInfoExpanded_; }
+export function setStateInfoExpanded(v: boolean) { stateInfoExpanded_ = v; }

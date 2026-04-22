@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
+import type { RegistryPlugin } from "$lib/types/plugin";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -118,7 +119,7 @@ describe("pluginUI store", () => {
   });
 
   async function setupStore(opts: {
-    registry?: typeof openaiPlugin[];
+    registry?: RegistryPlugin[];
     enabledNames?: string[];
     cliAvailable?: boolean;
     installedNames?: string[];

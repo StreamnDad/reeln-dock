@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod dock_log;
 mod models;
 mod orchestration;
 mod state;
@@ -65,6 +66,10 @@ fn main() {
             commands::games::bulk_update_event_type,
             commands::games::get_event_types,
             commands::games::quick_tag_event,
+            commands::games::update_game_info,
+            commands::games::set_game_livestream,
+            commands::games::remove_game_livestream,
+            commands::games::discover_game_image,
             // Games (execution)
             commands::games::init_game,
             commands::games::process_segment,

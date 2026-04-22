@@ -58,8 +58,8 @@ pub fn execute_hook(
     shared: &serde_json::Value,
     config_path: Option<&str>,
 ) -> Result<HookExecutionResult, String> {
-    let context_json =
-        serde_json::to_string(context_data).map_err(|e| format!("Failed to serialize context: {}", e))?;
+    let context_json = serde_json::to_string(context_data)
+        .map_err(|e| format!("Failed to serialize context: {}", e))?;
 
     let shared_json =
         serde_json::to_string(shared).map_err(|e| format!("Failed to serialize shared: {}", e))?;
@@ -72,7 +72,7 @@ pub fn execute_hook(
         .arg(&context_json);
 
     // Only pass shared if non-empty
-    if shared.is_object() && !shared.as_object().map_or(true, |m| m.is_empty()) {
+    if shared.is_object() && !shared.as_object().is_none_or(|m| m.is_empty()) {
         cmd.arg("--shared-json").arg(&shared_json);
     }
 
@@ -80,7 +80,9 @@ pub fn execute_hook(
         cmd.arg("--config").arg(path);
     }
 
-    let output = cmd.output().map_err(|e| format!("Failed to execute reeln CLI: {}", e))?;
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to execute reeln CLI: {}", e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -244,7 +246,8 @@ mod tests {
     #[test]
     fn test_execute_hook_success() {
         let dir = tempfile::tempdir().unwrap();
-        let json_out = r#"{"success":true,"hook":"on_game_init","shared":{"k":"v"},"logs":[],"errors":[]}"#;
+        let json_out =
+            r#"{"success":true,"hook":"on_game_init","shared":{"k":"v"},"logs":[],"errors":[]}"#;
         let script = make_script(dir.path(), json_out);
 
         let result = execute_hook(
@@ -283,7 +286,8 @@ mod tests {
     #[test]
     fn test_execute_hook_with_config_path() {
         let dir = tempfile::tempdir().unwrap();
-        let json_out = r#"{"success":true,"hook":"on_game_init","shared":{},"logs":[],"errors":[]}"#;
+        let json_out =
+            r#"{"success":true,"hook":"on_game_init","shared":{},"logs":[],"errors":[]}"#;
         let script = make_script(dir.path(), json_out);
 
         let result = execute_hook(
@@ -351,7 +355,8 @@ mod tests {
         // When shared is an empty object, the --shared-json flag should be skipped.
         // We verify this indirectly: the script still succeeds because it ignores args.
         let dir = tempfile::tempdir().unwrap();
-        let json_out = r#"{"success":true,"hook":"on_game_init","shared":{},"logs":[],"errors":[]}"#;
+        let json_out =
+            r#"{"success":true,"hook":"on_game_init","shared":{},"logs":[],"errors":[]}"#;
         let script = make_script(dir.path(), json_out);
 
         let result = execute_hook(
@@ -370,7 +375,8 @@ mod tests {
     fn test_execute_hook_null_shared_not_passed() {
         // When shared is not an object (e.g. null), the --shared-json flag should be skipped.
         let dir = tempfile::tempdir().unwrap();
-        let json_out = r#"{"success":true,"hook":"on_game_init","shared":{},"logs":[],"errors":[]}"#;
+        let json_out =
+            r#"{"success":true,"hook":"on_game_init","shared":{},"logs":[],"errors":[]}"#;
         let script = make_script(dir.path(), json_out);
 
         let result = execute_hook(
@@ -416,15 +422,24 @@ mod tests {
         // Original stdout log preserved
         assert!(result.logs.contains(&"from_stdout".to_string()));
         // stderr lines appended to logs
-        assert!(result.logs.contains(&"warning: config deprecated".to_string()));
-        assert!(result.logs.contains(&"notice: upgrade available".to_string()));
+        assert!(
+            result
+                .logs
+                .contains(&"warning: config deprecated".to_string())
+        );
+        assert!(
+            result
+                .logs
+                .contains(&"notice: upgrade available".to_string())
+        );
         assert_eq!(result.logs.len(), 3);
     }
 
     #[test]
     fn test_execute_hook_empty_stderr_not_added() {
         let dir = tempfile::tempdir().unwrap();
-        let json_out = r#"{"success":true,"hook":"on_game_init","shared":{},"logs":[],"errors":[]}"#;
+        let json_out =
+            r#"{"success":true,"hook":"on_game_init","shared":{},"logs":[],"errors":[]}"#;
         let script = make_script(dir.path(), json_out);
 
         let result = execute_hook(

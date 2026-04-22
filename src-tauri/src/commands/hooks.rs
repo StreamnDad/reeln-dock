@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::orchestration::hook_executor::{self, HookExecutionResult};
 use crate::state::AppState;
@@ -57,7 +57,10 @@ fn parse_version_output(stdout: &str) -> (String, Vec<CliPluginInfo>) {
     for line in stdout.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("reeln ") && !trimmed.contains("native") {
-            cli_version = trimmed.strip_prefix("reeln ").unwrap_or(trimmed).to_string();
+            cli_version = trimmed
+                .strip_prefix("reeln ")
+                .unwrap_or(trimmed)
+                .to_string();
         } else if trimmed == "plugins:" {
             in_plugins = true;
         } else if in_plugins && !trimmed.is_empty() {
@@ -81,6 +84,7 @@ pub struct PluginInstallResult {
 
 #[tauri::command]
 pub async fn install_plugin_via_cli(
+    app: AppHandle,
     state: State<'_, AppState>,
     plugin_name: String,
 ) -> Result<PluginInstallResult, String> {
@@ -91,13 +95,22 @@ pub async fn install_plugin_via_cli(
 
     let reeln_path = hook_executor::detect_reeln_cli(cli_path_override.as_deref())?;
 
+    let app_clone = app.clone();
     tokio::task::spawn_blocking(move || {
+        crate::dock_log::log_cli_command(
+            &app_clone,
+            "Hooks",
+            &reeln_path,
+            &["plugins", "install", &plugin_name],
+        );
         let output = Command::new(&reeln_path)
             .arg("plugins")
             .arg("install")
             .arg(&plugin_name)
             .output()
             .map_err(|e| format!("Failed to run reeln plugins install: {e}"))?;
+
+        crate::dock_log::log_cli_output(&app_clone, "Hooks", &output);
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -157,6 +170,7 @@ const AUTH_REFRESH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 /// Runs `reeln plugins auth [<name>] --json [--config <path>]`.
 #[tauri::command]
 pub async fn check_plugin_auth(
+    app: AppHandle,
     state: State<'_, AppState>,
     plugin_name: Option<String>,
     config_path: Option<String>,
@@ -172,15 +186,35 @@ pub async fn check_plugin_auth(
     let reeln_path = hook_executor::detect_reeln_cli(cli_path_override.as_deref())?;
     let pid_holder = state.auth_child_pid.clone();
 
+    let app_clone = app.clone();
     tokio::task::spawn_blocking(move || {
-        run_auth_command(
+        let mut log_args = vec!["plugins", "auth"];
+        if let Some(ref name) = plugin_name {
+            log_args.push(name);
+        }
+        log_args.push("--json");
+        crate::dock_log::log_cli_command(&app_clone, "Hooks", &reeln_path, &log_args);
+
+        let result = run_auth_command(
             &reeln_path,
             plugin_name.as_deref(),
             false,
             effective_config.as_deref(),
             AUTH_CHECK_TIMEOUT,
             Some(&pid_holder),
-        )
+        );
+
+        match &result {
+            Ok(reports) => crate::dock_log::emit(
+                &app_clone,
+                "info",
+                "Hooks",
+                &format!("auth check returned {} plugin(s)", reports.len()),
+            ),
+            Err(e) => crate::dock_log::emit(&app_clone, "error", "Hooks", e),
+        }
+
+        result
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?
@@ -190,6 +224,7 @@ pub async fn check_plugin_auth(
 /// Runs `reeln plugins auth <name> --refresh --json [--config <path>]`.
 #[tauri::command]
 pub async fn refresh_plugin_auth(
+    app: AppHandle,
     state: State<'_, AppState>,
     plugin_name: String,
     config_path: Option<String>,
@@ -205,15 +240,35 @@ pub async fn refresh_plugin_auth(
     let reeln_path = hook_executor::detect_reeln_cli(cli_path_override.as_deref())?;
     let pid_holder = state.auth_child_pid.clone();
 
+    let app_clone = app.clone();
     tokio::task::spawn_blocking(move || {
-        run_auth_command(
+        crate::dock_log::log_cli_command(
+            &app_clone,
+            "Hooks",
+            &reeln_path,
+            &["plugins", "auth", &plugin_name, "--refresh", "--json"],
+        );
+
+        let result = run_auth_command(
             &reeln_path,
             Some(&plugin_name),
             true,
             effective_config.as_deref(),
             AUTH_REFRESH_TIMEOUT,
             Some(&pid_holder),
-        )
+        );
+
+        match &result {
+            Ok(reports) => crate::dock_log::emit(
+                &app_clone,
+                "info",
+                "Hooks",
+                &format!("auth refresh returned {} plugin(s)", reports.len()),
+            ),
+            Err(e) => crate::dock_log::emit(&app_clone, "error", "Hooks", e),
+        }
+
+        result
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?
@@ -227,9 +282,7 @@ pub fn cancel_plugin_auth(state: State<'_, AppState>) -> Result<(), String> {
         // Send SIGTERM via kill command (works on macOS/Linux without libc dependency)
         #[cfg(unix)]
         {
-            let _ = Command::new("kill")
-                .arg(pid.to_string())
-                .output();
+            let _ = Command::new("kill").arg(pid.to_string()).output();
         }
         #[cfg(not(unix))]
         {
@@ -277,10 +330,10 @@ fn run_auth_command(
         .map_err(|e| format!("Failed to run reeln plugins auth: {e}"))?;
 
     // Store PID for cancel support
-    if let Some(holder) = pid_holder {
-        if let Ok(mut lock) = holder.lock() {
-            *lock = Some(child.id());
-        }
+    if let Some(holder) = pid_holder
+        && let Ok(mut lock) = holder.lock()
+    {
+        *lock = Some(child.id());
     }
 
     // Wait with timeout — poll until child exits or deadline
@@ -326,24 +379,23 @@ fn run_auth_command(
     // Parse JSON even on non-zero exit (FAIL/EXPIRED returns exit 1 but valid JSON)
     let response: PluginAuthResponse = serde_json::from_str(&stdout).map_err(|e| {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        format!(
-            "Failed to parse auth output: {e}\nstdout: {stdout}\nstderr: {stderr}"
-        )
+        format!("Failed to parse auth output: {e}\nstdout: {stdout}\nstderr: {stderr}")
     })?;
 
     Ok(response.plugins)
 }
 
 fn clear_pid(pid_holder: Option<&std::sync::Mutex<Option<u32>>>) {
-    if let Some(holder) = pid_holder {
-        if let Ok(mut lock) = holder.lock() {
-            *lock = None;
-        }
+    if let Some(holder) = pid_holder
+        && let Ok(mut lock) = holder.lock()
+    {
+        *lock = None;
     }
 }
 
 #[tauri::command]
 pub async fn execute_plugin_hook(
+    app: AppHandle,
     state: State<'_, AppState>,
     hook: String,
     context_data: serde_json::Value,
@@ -362,14 +414,48 @@ pub async fn execute_plugin_hook(
     let reeln_path = hook_executor::detect_reeln_cli(cli_path_override.as_deref())?;
 
     // Run the CLI subprocess on a blocking thread
+    let app_clone = app.clone();
     tokio::task::spawn_blocking(move || {
-        hook_executor::execute_hook(
+        crate::dock_log::log_cli_command(
+            &app_clone,
+            "Hooks",
+            &reeln_path,
+            &["hooks", "run", &hook],
+        );
+
+        let result = hook_executor::execute_hook(
             &reeln_path,
             &hook,
             &context_data,
             &shared,
             effective_config.as_deref(),
-        )
+        );
+
+        match &result {
+            Ok(res) => {
+                if res.success {
+                    crate::dock_log::emit(
+                        &app_clone,
+                        "info",
+                        "Hooks",
+                        &format!("hook '{}' completed successfully", hook),
+                    );
+                } else {
+                    crate::dock_log::emit(
+                        &app_clone,
+                        "warn",
+                        "Hooks",
+                        &format!("hook '{}' completed with failures", hook),
+                    );
+                }
+                for log_line in &res.logs {
+                    crate::dock_log::emit(&app_clone, "debug", "Hooks", log_line);
+                }
+            }
+            Err(e) => crate::dock_log::emit(&app_clone, "error", "Hooks", e),
+        }
+
+        result
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?
@@ -446,16 +532,14 @@ mod tests {
     // install_plugin_via_cli — subprocess arg verification
     // -----------------------------------------------------------------------
 
-    fn make_arg_dump_script(dir: &std::path::Path, args_file: &std::path::Path) -> std::path::PathBuf {
+    fn make_arg_dump_script(
+        dir: &std::path::Path,
+        args_file: &std::path::Path,
+    ) -> std::path::PathBuf {
         let script = dir.join("fake_reeln.sh");
         let mut f = std::fs::File::create(&script).unwrap();
         writeln!(f, "#!/bin/sh").unwrap();
-        writeln!(
-            f,
-            "printf '%s\\n' \"$@\" > \"{}\"",
-            args_file.display()
-        )
-        .unwrap();
+        writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
         writeln!(f, "echo 'installed successfully'").unwrap();
         #[cfg(unix)]
         {
@@ -525,7 +609,11 @@ mod tests {
             Some("StreamnDad Hockey")
         );
         assert_eq!(
-            response.plugins[0].results[0].scopes.as_ref().unwrap().len(),
+            response.plugins[0].results[0]
+                .scopes
+                .as_ref()
+                .unwrap()
+                .len(),
             2
         );
     }
@@ -671,12 +759,7 @@ mod tests {
         {
             let mut f = std::fs::File::create(&script).unwrap();
             writeln!(f, "#!/bin/sh").unwrap();
-            writeln!(
-                f,
-                "printf '%s\\n' \"$@\" > \"{}\"",
-                args_file.display()
-            )
-            .unwrap();
+            writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
             writeln!(f, "echo '{{\"plugins\": []}}'").unwrap();
             #[cfg(unix)]
             {
@@ -685,7 +768,14 @@ mod tests {
             }
         }
 
-        let result = run_auth_command(script.to_str().unwrap(), None, false, None, TEST_TIMEOUT, None);
+        let result = run_auth_command(
+            script.to_str().unwrap(),
+            None,
+            false,
+            None,
+            TEST_TIMEOUT,
+            None,
+        );
         assert!(result.is_ok());
 
         let args: Vec<String> = std::fs::read_to_string(&args_file)
@@ -706,12 +796,7 @@ mod tests {
         {
             let mut f = std::fs::File::create(&script).unwrap();
             writeln!(f, "#!/bin/sh").unwrap();
-            writeln!(
-                f,
-                "printf '%s\\n' \"$@\" > \"{}\"",
-                args_file.display()
-            )
-            .unwrap();
+            writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
             writeln!(f, "echo '{{\"plugins\": []}}'").unwrap();
             #[cfg(unix)]
             {
@@ -720,7 +805,14 @@ mod tests {
             }
         }
 
-        let result = run_auth_command(script.to_str().unwrap(), Some("google"), false, None, TEST_TIMEOUT, None);
+        let result = run_auth_command(
+            script.to_str().unwrap(),
+            Some("google"),
+            false,
+            None,
+            TEST_TIMEOUT,
+            None,
+        );
         assert!(result.is_ok());
 
         let args: Vec<String> = std::fs::read_to_string(&args_file)
@@ -741,12 +833,7 @@ mod tests {
         {
             let mut f = std::fs::File::create(&script).unwrap();
             writeln!(f, "#!/bin/sh").unwrap();
-            writeln!(
-                f,
-                "printf '%s\\n' \"$@\" > \"{}\"",
-                args_file.display()
-            )
-            .unwrap();
+            writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
             writeln!(f, "echo '{{\"plugins\": []}}'").unwrap();
             #[cfg(unix)]
             {
@@ -755,7 +842,14 @@ mod tests {
             }
         }
 
-        let result = run_auth_command(script.to_str().unwrap(), Some("meta"), true, None, TEST_TIMEOUT, None);
+        let result = run_auth_command(
+            script.to_str().unwrap(),
+            Some("meta"),
+            true,
+            None,
+            TEST_TIMEOUT,
+            None,
+        );
         assert!(result.is_ok());
 
         let args: Vec<String> = std::fs::read_to_string(&args_file)
@@ -776,12 +870,7 @@ mod tests {
         {
             let mut f = std::fs::File::create(&script).unwrap();
             writeln!(f, "#!/bin/sh").unwrap();
-            writeln!(
-                f,
-                "printf '%s\\n' \"$@\" > \"{}\"",
-                args_file.display()
-            )
-            .unwrap();
+            writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
             writeln!(f, "echo '{{\"plugins\": []}}'").unwrap();
             #[cfg(unix)]
             {
@@ -808,7 +897,14 @@ mod tests {
 
         assert_eq!(
             args,
-            vec!["plugins", "auth", "google", "--json", "--config", "/path/to/config.json"]
+            vec![
+                "plugins",
+                "auth",
+                "google",
+                "--json",
+                "--config",
+                "/path/to/config.json"
+            ]
         );
     }
 
@@ -832,7 +928,14 @@ mod tests {
             }
         }
 
-        let result = run_auth_command(script.to_str().unwrap(), Some("google"), false, None, TEST_TIMEOUT, None);
+        let result = run_auth_command(
+            script.to_str().unwrap(),
+            Some("google"),
+            false,
+            None,
+            TEST_TIMEOUT,
+            None,
+        );
         let reports = result.unwrap();
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].results[0].status, "fail");
@@ -855,7 +958,14 @@ mod tests {
 
         let short_timeout = std::time::Duration::from_millis(300);
         let start = std::time::Instant::now();
-        let result = run_auth_command(script.to_str().unwrap(), None, false, None, short_timeout, None);
+        let result = run_auth_command(
+            script.to_str().unwrap(),
+            None,
+            false,
+            None,
+            short_timeout,
+            None,
+        );
         let elapsed = start.elapsed();
 
         assert!(result.is_err());
@@ -948,7 +1058,14 @@ mod tests {
             }
         }
 
-        let result = run_auth_command(script.to_str().unwrap(), None, false, None, TEST_TIMEOUT, None);
+        let result = run_auth_command(
+            script.to_str().unwrap(),
+            None,
+            false,
+            None,
+            TEST_TIMEOUT,
+            None,
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Failed to parse auth output"));
     }

@@ -3,9 +3,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use reeln_media::{
-    ConcatOptions, MediaBackend, MediaError, MediaInfo, RenderPlan, RenderResult,
-};
+use reeln_media::{ConcatOptions, MediaBackend, MediaError, MediaInfo, RenderPlan, RenderResult};
 
 /// A mock `MediaBackend` that creates empty output files instead of encoding video.
 pub struct MockMediaBackend;
@@ -89,21 +87,6 @@ pub fn create_test_game(game_dir: &Path) -> reeln_state::GameState {
 /// Create a minimal reeln config JSON file and return AppConfig.
 pub fn create_test_config(path: &Path) -> reeln_config::AppConfig {
     let config = reeln_config::AppConfig::default();
-    let json = serde_json::to_string_pretty(&config).unwrap();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).unwrap();
-    }
-    std::fs::write(path, json).unwrap();
-    config
-}
-
-/// Create a reeln config with render profiles.
-pub fn create_test_config_with_profiles(
-    path: &Path,
-    profiles: std::collections::HashMap<String, reeln_config::RenderProfile>,
-) -> reeln_config::AppConfig {
-    let mut config = reeln_config::AppConfig::default();
-    config.render_profiles = profiles;
     let json = serde_json::to_string_pretty(&config).unwrap();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).unwrap();

@@ -12,7 +12,6 @@
     isCliQueueLoading,
     refreshAllCliQueues,
     removeCliItem,
-    publishCliItem,
     publishAllCliItems,
   } from "$lib/stores/renderQueue.svelte";
   import type { RenderStageItem, CliQueueItem } from "$lib/types/queue";

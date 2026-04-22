@@ -27,10 +27,7 @@ fn load_meta_map(state: &AppState) -> Result<HashMap<String, TournamentMeta>, St
     serde_json::from_str(&content).map_err(|e| e.to_string())
 }
 
-fn save_meta_map(
-    state: &AppState,
-    map: &HashMap<String, TournamentMeta>,
-) -> Result<(), String> {
+fn save_meta_map(state: &AppState, map: &HashMap<String, TournamentMeta>) -> Result<(), String> {
     let path = tournaments_file(state)?;
     let json = serde_json::to_string_pretty(map).map_err(|e| e.to_string())?;
     std::fs::write(&path, json).map_err(|e| e.to_string())
@@ -38,9 +35,7 @@ fn save_meta_map(
 
 /// List all tournament metadata. Returns entries for tournaments that have metadata.
 #[tauri::command]
-pub fn list_tournament_metadata(
-    state: State<'_, AppState>,
-) -> Result<Vec<TournamentMeta>, String> {
+pub fn list_tournament_metadata(state: State<'_, AppState>) -> Result<Vec<TournamentMeta>, String> {
     let map = load_meta_map(&state)?;
     let mut list: Vec<TournamentMeta> = map.into_values().collect();
     list.sort_by(|a, b| a.name.cmp(&b.name));

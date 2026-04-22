@@ -1,0 +1,75 @@
+name: Bug Report
+description: Report a bug in reeln-dock
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug! Please fill out the details below.
+
+  - type: input
+    id: version
+    attributes:
+      label: reeln-dock version
+      description: Check Help > About or the title bar
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Windows 11
+        - Windows 10
+        - Ubuntu / Debian
+        - Fedora / RHEL
+        - Arch Linux
+        - Other Linux
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug
+      placeholder: Describe what you expected vs. what actually happened
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: How can we reproduce this?
+      placeholder: |
+        1. Open reeln-dock
+        2. Navigate to ...
+        3. Click ...
+        4. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste any error messages or logs (Settings > Logs)
+      render: shell
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: If applicable, add screenshots to help explain the issue
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Any other relevant details (reeln-cli version, config setup, plugin list, etc.)

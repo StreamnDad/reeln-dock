@@ -6,6 +6,7 @@ use std::sync::Arc;
 use reeln_config::{AppConfig, RenderProfile};
 use reeln_media::{ConcatOptions, MediaBackend, RenderPlan, RenderResult};
 use reeln_state::RenderEntry;
+use tauri::AppHandle;
 
 use super::progress::ProgressReporter;
 
@@ -40,6 +41,8 @@ pub struct CliRenderParams<'a> {
     pub output_path: Option<&'a Path>,
     /// Add to render queue instead of immediate publish — maps to `--queue`.
     pub queue: bool,
+    /// Optional Tauri app handle for emitting log events to the frontend.
+    pub app_handle: Option<&'a AppHandle>,
 }
 
 impl<'a> CliRenderParams<'a> {
@@ -65,7 +68,11 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
         .unwrap_or(0);
 
     // Build the CLI command
-    let subcommand = if params.mode == Some("apply") { "apply" } else { "short" };
+    let subcommand = if params.mode == Some("apply") {
+        "apply"
+    } else {
+        "short"
+    };
     let mut cmd = Command::new(params.cli_path);
     cmd.arg("render").arg(subcommand);
 
@@ -88,10 +95,10 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
     }
 
     // Event ID
-    if let Some(eid) = params.event_id {
-        if !eid.is_empty() {
-            cmd.arg("--event").arg(eid);
-        }
+    if let Some(eid) = params.event_id
+        && !eid.is_empty()
+    {
+        cmd.arg("--event").arg(eid);
     }
 
     // Config path
@@ -100,44 +107,43 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
     }
 
     // Overrides (only for "short" mode — "apply" doesn't accept these)
-    if subcommand == "short" {
-        if let Some(ovr) = params.overrides {
-            if let Some(ref crop) = ovr.crop_mode {
-                if !crop.is_empty() {
-                    cmd.arg("--crop").arg(crop);
-                }
-            }
-            if let Some(scale) = ovr.scale {
-                if (scale - 1.0).abs() > f64::EPSILON {
-                    cmd.arg("--scale").arg(scale.to_string());
-                }
-            }
-            if let Some(speed) = ovr.speed {
-                if (speed - 1.0).abs() > f64::EPSILON {
-                    cmd.arg("--speed").arg(speed.to_string());
-                }
-            }
-            if ovr.smart == Some(true) {
-                cmd.arg("--smart");
-            }
-            if let Some(zf) = ovr.zoom_frames {
-                cmd.arg("--zoom-frames").arg(zf.to_string());
-            }
-            if let Some(ref pc) = ovr.pad_color {
-                if !pc.is_empty() {
-                    cmd.arg("--pad-color").arg(pc);
-                }
-            }
+    if subcommand == "short"
+        && let Some(ovr) = params.overrides
+    {
+        if let Some(ref crop) = ovr.crop_mode
+            && !crop.is_empty()
+        {
+            cmd.arg("--crop").arg(crop);
+        }
+        if let Some(scale) = ovr.scale
+            && (scale - 1.0).abs() > f64::EPSILON
+        {
+            cmd.arg("--scale").arg(scale.to_string());
+        }
+        if let Some(speed) = ovr.speed
+            && (speed - 1.0).abs() > f64::EPSILON
+        {
+            cmd.arg("--speed").arg(speed.to_string());
+        }
+        if ovr.smart == Some(true) {
+            cmd.arg("--smart");
+        }
+        if let Some(zf) = ovr.zoom_frames {
+            cmd.arg("--zoom-frames").arg(zf.to_string());
+        }
+        if let Some(ref pc) = ovr.pad_color
+            && !pc.is_empty()
+        {
+            cmd.arg("--pad-color").arg(pc);
         }
     }
 
     // Anchor (crop anchor position) — only for "short" mode
-    if subcommand == "short" {
-        if let Some(ovr) = params.overrides {
-            if let (Some(ax), Some(ay)) = (ovr.anchor_x, ovr.anchor_y) {
-                cmd.arg("--anchor").arg(format!("{ax},{ay}"));
-            }
-        }
+    if subcommand == "short"
+        && let Some(ovr) = params.overrides
+        && let (Some(ax), Some(ay)) = (ovr.anchor_x, ovr.anchor_y)
+    {
+        cmd.arg("--anchor").arg(format!("{ax},{ay}"));
     }
 
     // Plugin-contributed fields → --plugin-input KEY=VALUE
@@ -152,10 +158,10 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
     }
 
     // Player info
-    if let Some(scorer) = params.scorer {
-        if !scorer.is_empty() {
-            cmd.arg("--player").arg(scorer);
-        }
+    if let Some(scorer) = params.scorer
+        && !scorer.is_empty()
+    {
+        cmd.arg("--player").arg(scorer);
     }
     if params.assist1.is_some() || params.assist2.is_some() {
         let assists: Vec<&str> = [params.assist1, params.assist2]
@@ -167,17 +173,17 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
         }
     }
     // Jersey numbers for roster lookup
-    if let Some(pn) = params.player_numbers {
-        if !pn.is_empty() {
-            cmd.arg("--player-numbers").arg(pn);
-        }
+    if let Some(pn) = params.player_numbers
+        && !pn.is_empty()
+    {
+        cmd.arg("--player-numbers").arg(pn);
     }
 
     // Event type (for scoring team resolution)
-    if let Some(et) = params.event_type {
-        if !et.is_empty() {
-            cmd.arg("--event-type").arg(et);
-        }
+    if let Some(et) = params.event_type
+        && !et.is_empty()
+    {
+        cmd.arg("--event-type").arg(et);
     }
 
     // Iterate flag
@@ -200,10 +206,30 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
         cmd.arg("--queue");
     }
 
+    // Log the CLI command before execution
+    if let Some(app) = params.app_handle {
+        // Build a displayable args list from the Command
+        let args_display: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        let full_cmd = format!(
+            "{} {}",
+            cmd.get_program().to_string_lossy(),
+            args_display.join(" ")
+        );
+        crate::dock_log::emit(app, "info", "Render", &format!("$ {full_cmd}"));
+    }
+
     // Execute
     let output = cmd
         .output()
         .map_err(|e| format!("Failed to execute reeln CLI: {e}"))?;
+
+    // Log CLI output
+    if let Some(app) = params.app_handle {
+        crate::dock_log::log_cli_output(app, "Render", &output);
+    }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -229,14 +255,16 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
     // parse the CLI output to find the result file, or search common locations
     if new_entries.is_empty() {
         let _stdout = String::from_utf8_lossy(&output.stdout);
-        let stem = params.input_clip
+        let stem = params
+            .input_clip
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("clip");
         let clip_parent = params.input_clip.parent().unwrap_or(params.game_dir);
 
         // Try to find "Output: <path>" in stderr (CLI logs to stderr)
-        let output_from_log = stderr.lines()
+        let output_from_log = stderr
+            .lines()
             .find(|l| l.starts_with("Output: "))
             .map(|l| PathBuf::from(l.trim_start_matches("Output: ").trim()));
 
@@ -248,8 +276,18 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
         // CLI short mode: {clip_parent}/shorts/{stem}_short.mp4
         candidates.push(clip_parent.join("shorts").join(format!("{stem}_short.mp4")));
         // CLI iteration: {clip_parent}/shorts/{stem}_short.mp4 (same)
-        candidates.push(params.game_dir.join("renders").join(format!("{stem}_iteration.mp4")));
-        candidates.push(params.game_dir.join("renders").join(format!("{stem}_{}.mp4", params.first_profile())));
+        candidates.push(
+            params
+                .game_dir
+                .join("renders")
+                .join(format!("{stem}_iteration.mp4")),
+        );
+        candidates.push(
+            params
+                .game_dir
+                .join("renders")
+                .join(format!("{stem}_{}.mp4", params.first_profile())),
+        );
 
         if let Some(output_path) = candidates.iter().find(|p| p.is_file()) {
             // Stamp the entry's format with the full profile list ("a+b+c")
@@ -260,18 +298,18 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
                 output: output_path.display().to_string(),
                 segment_number: 0,
                 format,
-                crop_mode: params.overrides
+                crop_mode: params
+                    .overrides
                     .and_then(|o| o.crop_mode.clone())
                     .unwrap_or_default(),
                 rendered_at: chrono::Utc::now().to_rfc3339(),
                 event_id: params.event_id.unwrap_or("").to_string(),
             };
             // Save to game state
-            let mut state = reeln_state::load_game_state(params.game_dir)
-                .map_err(|e| e.to_string())?;
+            let mut state =
+                reeln_state::load_game_state(params.game_dir).map_err(|e| e.to_string())?;
             reeln_state::add_render(&mut state, entry.clone());
-            reeln_state::save_game_state(&state, params.game_dir)
-                .map_err(|e| e.to_string())?;
+            reeln_state::save_game_state(&state, params.game_dir).map_err(|e| e.to_string())?;
             return Ok(vec![entry]);
         }
     }
@@ -362,12 +400,12 @@ fn build_apply_plan(
                 .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
         })
         .or(profile.speed);
-    if let Some(speed) = effective_speed {
-        if (speed - 1.0).abs() > f64::EPSILON {
-            let pts_factor = 1.0 / speed;
-            filters.push(format!("setpts={pts_factor:.4}*PTS"));
-            audio_filter = Some(format!("atempo={speed}"));
-        }
+    if let Some(speed) = effective_speed
+        && (speed - 1.0).abs() > f64::EPSILON
+    {
+        let pts_factor = 1.0 / speed;
+        filters.push(format!("setpts={pts_factor:.4}*PTS"));
+        audio_filter = Some(format!("atempo={speed}"));
     }
 
     // LUT filter
@@ -450,12 +488,12 @@ fn build_render_plan(
                 .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
         })
         .or(profile.speed);
-    if let Some(speed) = effective_speed {
-        if (speed - 1.0).abs() > f64::EPSILON {
-            let pts_factor = 1.0 / speed;
-            filters.push(format!("setpts={pts_factor:.4}*PTS"));
-            audio_filter = Some(format!("atempo={speed}"));
-        }
+    if let Some(speed) = effective_speed
+        && (speed - 1.0).abs() > f64::EPSILON
+    {
+        let pts_factor = 1.0 / speed;
+        filters.push(format!("setpts={pts_factor:.4}*PTS"));
+        audio_filter = Some(format!("atempo={speed}"));
     }
 
     // LUT filter
@@ -482,6 +520,7 @@ fn build_render_plan(
 /// `mode` controls the render strategy:
 /// - `"short"` (default): applies crop/scale from profile dimensions
 /// - `"apply"`: full-frame, no crop/scale — only speed/LUT/overlay
+#[allow(clippy::too_many_arguments)]
 pub fn render_short(
     backend: &Arc<dyn MediaBackend>,
     config: &AppConfig,
@@ -504,7 +543,11 @@ pub fn render_short(
     }
 
     if let Some(r) = reporter {
-        r.report("render", 0.0, &format!("Rendering with profile '{profile_name}'"));
+        r.report(
+            "render",
+            0.0,
+            &format!("Rendering with profile '{profile_name}'"),
+        );
     }
 
     let stem = input_clip
@@ -540,34 +583,40 @@ pub fn render_short(
             }
             let template_path = Path::new(template_path_str);
             if template_path.exists() {
-            let template = reeln_overlay::template::load_template(template_path)
+                let template = reeln_overlay::template::load_template(template_path)
+                    .map_err(|e| e.to_string())?;
+
+                let context = event_metadata.cloned().unwrap_or_default();
+
+                let overlay_png = output_dir.join(format!("{stem}_{profile_name}_overlay.png"));
+                reeln_overlay::render::render_template_to_png(&template, &context, &overlay_png)
+                    .map_err(|e| e.to_string())?;
+
+                let composited_output = output_dir.join(format!("{stem}_{profile_name}_final.mp4"));
+                let comp_opts = reeln_media::composite::CompositeOptions {
+                    video_codec: profile
+                        .codec
+                        .clone()
+                        .unwrap_or_else(|| config.video.codec.clone()),
+                    crf: profile.crf.unwrap_or(config.video.crf),
+                    audio_codec: profile
+                        .audio_codec
+                        .clone()
+                        .unwrap_or_else(|| config.video.audio_codec.clone()),
+                    ..Default::default()
+                };
+                let comp_result = reeln_media::composite::composite_overlay(
+                    &result.output,
+                    &overlay_png,
+                    &composited_output,
+                    &comp_opts,
+                )
                 .map_err(|e| e.to_string())?;
 
-            let context = event_metadata.cloned().unwrap_or_default();
+                let _ = std::fs::remove_file(&result.output);
+                let _ = std::fs::remove_file(&overlay_png);
 
-            let overlay_png = output_dir.join(format!("{stem}_{profile_name}_overlay.png"));
-            reeln_overlay::render::render_template_to_png(&template, &context, &overlay_png)
-                .map_err(|e| e.to_string())?;
-
-            let composited_output = output_dir.join(format!("{stem}_{profile_name}_final.mp4"));
-            let comp_opts = reeln_media::composite::CompositeOptions {
-                video_codec: profile.codec.clone().unwrap_or_else(|| config.video.codec.clone()),
-                crf: profile.crf.unwrap_or(config.video.crf),
-                audio_codec: profile.audio_codec.clone().unwrap_or_else(|| config.video.audio_codec.clone()),
-                ..Default::default()
-            };
-            let comp_result = reeln_media::composite::composite_overlay(
-                &result.output,
-                &overlay_png,
-                &composited_output,
-                &comp_opts,
-            )
-            .map_err(|e| e.to_string())?;
-
-            let _ = std::fs::remove_file(&result.output);
-            let _ = std::fs::remove_file(&overlay_png);
-
-            comp_result.output
+                comp_result.output
             } else {
                 result.output
             }
@@ -592,6 +641,7 @@ pub fn render_short(
 }
 
 /// Render multiple profiles for one clip (iteration), optionally concatenating.
+#[allow(clippy::too_many_arguments)]
 pub fn render_iteration(
     backend: &Arc<dyn MediaBackend>,
     config: &AppConfig,
@@ -620,7 +670,12 @@ pub fn render_iteration(
             r.report(
                 "iteration",
                 progress_base,
-                &format!("Rendering {}/{} ({})", i + 1, items.len(), item.profile_name),
+                &format!(
+                    "Rendering {}/{} ({})",
+                    i + 1,
+                    items.len(),
+                    item.profile_name
+                ),
             );
         }
 
@@ -639,7 +694,11 @@ pub fn render_iteration(
         entries.push(entry);
 
         if let Some(r) = reporter {
-            r.report("iteration", progress_end, &format!("Completed {}", item.profile_name));
+            r.report(
+                "iteration",
+                progress_end,
+                &format!("Completed {}", item.profile_name),
+            );
         }
     }
 
@@ -791,7 +850,11 @@ pub fn render_reel(
     }
 
     if let Some(r) = reporter {
-        r.report("concat", 0.1, &format!("Concatenating {} shorts", shorts.len()));
+        r.report(
+            "concat",
+            0.1,
+            &format!("Concatenating {} shorts", shorts.len()),
+        );
     }
 
     let refs: Vec<&Path> = shorts.iter().map(|p| p.as_path()).collect();
@@ -895,21 +958,23 @@ pub fn render_profile_preview(
 
     // Speed filter
     let mut audio_filter = None;
-    if let Some(speed) = profile.speed {
-        if (speed - 1.0).abs() > f64::EPSILON && speed > 0.0 {
-            let pts_factor = 1.0 / speed;
-            filters.push(format!("setpts={pts_factor:.4}*PTS"));
-            // atempo only accepts 0.5–100.0
-            let clamped = speed.max(0.5).min(100.0);
-            audio_filter = Some(format!("atempo={clamped}"));
-        }
+    if let Some(speed) = profile.speed
+        && (speed - 1.0).abs() > f64::EPSILON
+        && speed > 0.0
+    {
+        let pts_factor = 1.0 / speed;
+        filters.push(format!("setpts={pts_factor:.4}*PTS"));
+        // atempo only accepts 0.5–100.0
+        let clamped = speed.clamp(0.5, 100.0);
+        audio_filter = Some(format!("atempo={clamped}"));
     }
 
     // LUT filter — only if file exists
-    if let Some(ref lut) = profile.lut {
-        if !lut.is_empty() && Path::new(lut).is_file() {
-            filters.push(format!("lut3d={lut}"));
-        }
+    if let Some(ref lut) = profile.lut
+        && !lut.is_empty()
+        && Path::new(lut).is_file()
+    {
+        filters.push(format!("lut3d={lut}"));
     }
 
     let video_codec = profile.codec.clone().unwrap_or_else(|| {
@@ -996,12 +1061,11 @@ pub fn prepare_preview_proxy(
     let proxy_path = proxy_dir.join(format!("{path_hash}_{stem}.mp4"));
 
     // 3. Cache hit — proxy already exists and is non-empty.
-    if proxy_path.is_file() {
-        if let Ok(meta) = std::fs::metadata(&proxy_path) {
-            if meta.len() > 0 {
-                return Ok(proxy_path);
-            }
-        }
+    if proxy_path.is_file()
+        && let Ok(meta) = std::fs::metadata(&proxy_path)
+        && meta.len() > 0
+    {
+        return Ok(proxy_path);
     }
 
     // 4. Ensure proxy directory exists.
@@ -1061,12 +1125,11 @@ pub fn cleanup_proxy_cache(proxy_dir: &Path, max_age: std::time::Duration) {
         if !path.is_file() {
             continue;
         }
-        if let Ok(meta) = path.metadata() {
-            if let Ok(modified) = meta.modified() {
-                if modified < cutoff {
-                    let _ = std::fs::remove_file(&path);
-                }
-            }
+        if let Ok(meta) = path.metadata()
+            && let Ok(modified) = meta.modified()
+            && modified < cutoff
+        {
+            let _ = std::fs::remove_file(&path);
         }
     }
 }
@@ -1082,12 +1145,7 @@ mod tests {
         let script = dir.join("fake_reeln.sh");
         let mut f = std::fs::File::create(&script).unwrap();
         writeln!(f, "#!/bin/sh").unwrap();
-        writeln!(
-            f,
-            "printf '%s\\n' \"$@\" > \"{}\"",
-            args_file.display()
-        )
-        .unwrap();
+        writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
         writeln!(f, "echo 'test failure' >&2").unwrap();
         writeln!(f, "exit 1").unwrap();
         #[cfg(unix)]
@@ -1139,6 +1197,7 @@ mod tests {
             no_branding: false,
             output_path: None,
             queue: false,
+            app_handle: None,
         };
 
         let _ = render_via_cli(&params); // will error — we only care about args
@@ -1190,6 +1249,7 @@ mod tests {
             no_branding: false,
             output_path: None,
             queue: false,
+            app_handle: None,
         };
 
         let _ = render_via_cli(&params);
@@ -1230,6 +1290,7 @@ mod tests {
             no_branding: false,
             output_path: None,
             queue: false,
+            app_handle: None,
         };
 
         let _ = render_via_cli(&params);
@@ -1269,6 +1330,7 @@ mod tests {
             no_branding: false,
             output_path: Some(out.as_path()),
             queue: false,
+            app_handle: None,
         };
 
         let _ = render_via_cli(&params);
@@ -1307,6 +1369,7 @@ mod tests {
             no_branding: false,
             output_path: None,
             queue: false,
+            app_handle: None,
         };
 
         let _ = render_via_cli(&params);
@@ -1345,6 +1408,7 @@ mod tests {
             no_branding: false,
             output_path: None,
             queue: false,
+            app_handle: None,
         };
 
         let _ = render_via_cli(&params);
@@ -1391,6 +1455,7 @@ mod tests {
             no_branding: false,
             output_path: None,
             queue: false,
+            app_handle: None,
         };
 
         let _ = render_via_cli(&params);
@@ -1450,6 +1515,7 @@ mod tests {
             no_branding: false,
             output_path: None,
             queue: false,
+            app_handle: None,
         };
 
         let _ = render_via_cli(&params);
@@ -1496,6 +1562,7 @@ mod tests {
             no_branding: false,
             output_path: None,
             queue: false,
+            app_handle: None,
         };
 
         let _ = render_via_cli(&params);
@@ -1534,6 +1601,7 @@ mod tests {
             no_branding: false,
             output_path: None,
             queue: false,
+            app_handle: None,
         };
 
         let _ = render_via_cli(&params);
@@ -1575,6 +1643,7 @@ mod tests {
             no_branding: false,
             output_path: None,
             queue: false,
+            app_handle: None,
         };
 
         let _ = render_via_cli(&params);
@@ -1609,7 +1678,10 @@ mod tests {
             extra: {
                 let mut m = HashMap::new();
                 m.insert("smart_zoom".to_string(), serde_json::Value::Bool(true));
-                m.insert("quality".to_string(), serde_json::Value::String("high".to_string()));
+                m.insert(
+                    "quality".to_string(),
+                    serde_json::Value::String("high".to_string()),
+                );
                 m
             },
             ..Default::default()
@@ -1634,6 +1706,7 @@ mod tests {
             no_branding: true,
             output_path: None,
             queue: false,
+            app_handle: None,
         };
 
         let _ = render_via_cli(&params);
@@ -1659,7 +1732,9 @@ mod tests {
         let pn_idx = args.iter().position(|a| a == "--player-numbers").unwrap();
         assert_eq!(args[pn_idx + 1], "48,3,58");
         // Plugin inputs
-        let pi_indices: Vec<usize> = args.iter().enumerate()
+        let pi_indices: Vec<usize> = args
+            .iter()
+            .enumerate()
             .filter(|(_, a)| *a == "--plugin-input")
             .map(|(i, _)| i)
             .collect();
@@ -1702,6 +1777,7 @@ mod tests {
             no_branding: false,
             output_path: None,
             queue: true,
+            app_handle: None,
         };
 
         let _ = render_via_cli(&params);
@@ -1715,7 +1791,11 @@ mod tests {
             .filter(|(_, a)| *a == "--render-profile")
             .map(|(i, _)| i)
             .collect();
-        assert_eq!(rp_indices.len(), 2, "expected two --render-profile flags; got args: {args:?}");
+        assert_eq!(
+            rp_indices.len(),
+            2,
+            "expected two --render-profile flags; got args: {args:?}"
+        );
         assert_eq!(args[rp_indices[0] + 1], "player-overlay");
         assert_eq!(args[rp_indices[1] + 1], "slowmo-ten-second-clip");
 
@@ -1757,6 +1837,7 @@ mod tests {
             no_branding: false,
             output_path: None,
             queue: false,
+            app_handle: None,
         };
 
         let result = render_via_cli(&params);
@@ -1944,7 +2025,11 @@ mod tests {
             &config,
         );
         // pts_factor = 1.0 / 0.5 = 2.0
-        let setpts = plan.filters.iter().find(|f| f.starts_with("setpts=")).unwrap();
+        let setpts = plan
+            .filters
+            .iter()
+            .find(|f| f.starts_with("setpts="))
+            .unwrap();
         assert!(setpts.contains("2.0000"));
         assert_eq!(plan.audio_filter, Some("atempo=0.5".to_string()));
     }
@@ -2003,7 +2088,11 @@ mod tests {
             &config,
         );
         // Minimum speed is 0.3, pts_factor = 1.0 / 0.3 = 3.3333
-        let setpts = plan.filters.iter().find(|f| f.starts_with("setpts=")).unwrap();
+        let setpts = plan
+            .filters
+            .iter()
+            .find(|f| f.starts_with("setpts="))
+            .unwrap();
         assert!(setpts.contains("3.3333"));
         assert_eq!(plan.audio_filter, Some("atempo=0.3".to_string()));
     }
@@ -2029,7 +2118,12 @@ mod tests {
             &config,
         );
         // Apply plan should have NO scale or crop filters
-        assert!(!plan.filters.iter().any(|f| f.starts_with("scale=") || f.starts_with("crop=")));
+        assert!(
+            !plan
+                .filters
+                .iter()
+                .any(|f| f.starts_with("scale=") || f.starts_with("crop="))
+        );
     }
 
     #[test]
@@ -2046,7 +2140,11 @@ mod tests {
             &profile,
             &config,
         );
-        let setpts = plan.filters.iter().find(|f| f.starts_with("setpts=")).unwrap();
+        let setpts = plan
+            .filters
+            .iter()
+            .find(|f| f.starts_with("setpts="))
+            .unwrap();
         assert!(setpts.contains("0.5000"));
         assert_eq!(plan.audio_filter, Some("atempo=2".to_string()));
     }
@@ -2092,8 +2190,15 @@ mod tests {
         let output_dir = dir.path().join("renders");
 
         let result = render_short(
-            &backend, &config, &input, &output_dir, "tiktok",
-            None, None, None, None,
+            &backend,
+            &config,
+            &input,
+            &output_dir,
+            "tiktok",
+            None,
+            None,
+            None,
+            None,
         );
         assert!(result.is_ok());
         let entry = result.unwrap();
@@ -2122,8 +2227,15 @@ mod tests {
         let output_dir = dir.path().join("renders");
 
         let result = render_short(
-            &backend, &config, &input, &output_dir, "full",
-            None, None, None, Some("apply"),
+            &backend,
+            &config,
+            &input,
+            &output_dir,
+            "full",
+            None,
+            None,
+            None,
+            Some("apply"),
         );
         assert!(result.is_ok());
         let entry = result.unwrap();
@@ -2156,8 +2268,15 @@ mod tests {
         };
 
         let result = render_short(
-            &backend, &config, &input, &output_dir, "tiktok",
-            None, Some(&overrides), None, None,
+            &backend,
+            &config,
+            &input,
+            &output_dir,
+            "tiktok",
+            None,
+            Some(&overrides),
+            None,
+            None,
         );
         assert!(result.is_ok());
         let entry = result.unwrap();
@@ -2176,8 +2295,15 @@ mod tests {
         let output_dir = dir.path().join("renders");
 
         let result = render_short(
-            &backend, &config, &input, &output_dir, "nonexistent",
-            None, None, None, None,
+            &backend,
+            &config,
+            &input,
+            &output_dir,
+            "nonexistent",
+            None,
+            None,
+            None,
+            None,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not found"));
@@ -2207,8 +2333,15 @@ mod tests {
         metadata.insert("team".to_string(), "Team A".to_string());
 
         let result = render_short(
-            &backend, &config, &input, &output_dir, "tiktok",
-            Some(&metadata), None, None, None,
+            &backend,
+            &config,
+            &input,
+            &output_dir,
+            "tiktok",
+            Some(&metadata),
+            None,
+            None,
+            None,
         );
         assert!(result.is_ok());
     }
@@ -2242,8 +2375,15 @@ mod tests {
         }];
 
         let result = render_iteration(
-            &backend, &config, &input, &output_dir, &items,
-            false, None, None, None,
+            &backend,
+            &config,
+            &input,
+            &output_dir,
+            &items,
+            false,
+            None,
+            None,
+            None,
         );
         assert!(result.is_ok());
         let entries = result.unwrap();
@@ -2274,13 +2414,26 @@ mod tests {
         let output_dir = dir.path().join("renders");
 
         let items = vec![
-            IterationItem { profile_name: "tiktok".to_string(), overrides: None },
-            IterationItem { profile_name: "youtube".to_string(), overrides: None },
+            IterationItem {
+                profile_name: "tiktok".to_string(),
+                overrides: None,
+            },
+            IterationItem {
+                profile_name: "youtube".to_string(),
+                overrides: None,
+            },
         ];
 
         let result = render_iteration(
-            &backend, &config, &input, &output_dir, &items,
-            false, None, None, None,
+            &backend,
+            &config,
+            &input,
+            &output_dir,
+            &items,
+            false,
+            None,
+            None,
+            None,
         );
         assert!(result.is_ok());
         let entries = result.unwrap();
@@ -2299,8 +2452,15 @@ mod tests {
         let output_dir = dir.path().join("renders");
 
         let result = render_iteration(
-            &backend, &config, &input, &output_dir, &[],
-            false, None, None, None,
+            &backend,
+            &config,
+            &input,
+            &output_dir,
+            &[],
+            false,
+            None,
+            None,
+            None,
         );
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "No iteration items provided");
@@ -2329,13 +2489,26 @@ mod tests {
         let output_dir = dir.path().join("renders");
 
         let items = vec![
-            IterationItem { profile_name: "tiktok".to_string(), overrides: None },
-            IterationItem { profile_name: "youtube".to_string(), overrides: None },
+            IterationItem {
+                profile_name: "tiktok".to_string(),
+                overrides: None,
+            },
+            IterationItem {
+                profile_name: "youtube".to_string(),
+                overrides: None,
+            },
         ];
 
         let result = render_iteration(
-            &backend, &config, &input, &output_dir, &items,
-            true, None, None, None,
+            &backend,
+            &config,
+            &input,
+            &output_dir,
+            &items,
+            true,
+            None,
+            None,
+            None,
         );
         assert!(result.is_ok());
         let entries = result.unwrap();
@@ -2384,7 +2557,12 @@ mod tests {
         let output_dir = dir.path().join("previews");
 
         let result = render_preview(
-            &backend, &input, &output_dir, Some(&config), Some("tiktok"), None,
+            &backend,
+            &input,
+            &output_dir,
+            Some(&config),
+            Some("tiktok"),
+            None,
         );
         assert!(result.is_ok());
         let output = result.unwrap();
@@ -2408,9 +2586,7 @@ mod tests {
         std::fs::write(&short2, "fake2").unwrap();
         let output = dir.path().join("reel.mp4");
 
-        let result = render_reel(
-            &backend, &config, &[short1, short2], &output, None,
-        );
+        let result = render_reel(&backend, &config, &[short1, short2], &output, None);
         assert!(result.is_ok());
         let rr = result.unwrap();
         assert!(rr.output.exists());
@@ -2426,10 +2602,7 @@ mod tests {
 
         let result = render_reel(&backend, &config, &[], &output, None);
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err(),
-            "No shorts to concatenate into a reel"
-        );
+        assert_eq!(result.unwrap_err(), "No shorts to concatenate into a reel");
     }
 
     // -----------------------------------------------------------------------
@@ -2612,7 +2785,8 @@ mod tests {
         let backend = crate::test_utils::mock_backend();
         let profile = serde_json::json!({"name": "with-config"});
 
-        let result = render_profile_preview(&backend, &input, &out_dir, Some(&config), &profile, None);
+        let result =
+            render_profile_preview(&backend, &input, &out_dir, Some(&config), &profile, None);
         assert!(result.is_ok());
     }
 
@@ -2766,7 +2940,13 @@ mod tests {
         let second = prepare_preview_proxy(&backend, &input, &proxy_dir).unwrap();
         assert_eq!(first, second);
         // Name includes stem
-        assert!(first.file_name().unwrap().to_string_lossy().contains("clip"));
+        assert!(
+            first
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .contains("clip")
+        );
     }
 
     #[test]
@@ -2792,12 +2972,13 @@ mod tests {
         let old_file = proxy_dir.join("old_clip.mp4");
         std::fs::write(&old_file, b"old").unwrap();
         // Set modification time to 30 days ago
-        let thirty_days_ago = std::time::SystemTime::now()
-            - std::time::Duration::from_secs(30 * 24 * 60 * 60);
+        let thirty_days_ago =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(30 * 24 * 60 * 60);
         filetime::set_file_mtime(
             &old_file,
             filetime::FileTime::from_system_time(thirty_days_ago),
-        ).unwrap();
+        )
+        .unwrap();
 
         let new_file = proxy_dir.join("new_clip.mp4");
         std::fs::write(&new_file, b"new").unwrap();

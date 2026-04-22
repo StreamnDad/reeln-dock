@@ -138,11 +138,12 @@ pub fn clone_team_profile(
         .join(&source_level)
         .join(format!("{source_slug}.json"));
     if !source_path.is_file() {
-        return Err(format!("Source team not found: {source_level}/{source_name}"));
+        return Err(format!(
+            "Source team not found: {source_level}/{source_name}"
+        ));
     }
     let content = std::fs::read_to_string(&source_path).map_err(|e| e.to_string())?;
-    let mut profile: TeamProfile =
-        serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    let mut profile: TeamProfile = serde_json::from_str(&content).map_err(|e| e.to_string())?;
     profile.team_name = new_name;
     profile.level = new_level.unwrap_or(source_level);
     let dest_slug = slugify(&profile.team_name);
@@ -150,7 +151,10 @@ pub fn clone_team_profile(
         .join(&profile.level)
         .join(format!("{dest_slug}.json"));
     if dest.is_file() {
-        return Err(format!("Team '{}' already exists in level '{}'", profile.team_name, profile.level));
+        return Err(format!(
+            "Team '{}' already exists in level '{}'",
+            profile.team_name, profile.level
+        ));
     }
     std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(&profile).map_err(|e| e.to_string())?;
@@ -191,10 +195,7 @@ pub fn rename_team_level(
 }
 
 #[tauri::command]
-pub fn delete_team_level(
-    level: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub fn delete_team_level(level: String, state: State<'_, AppState>) -> Result<(), String> {
     let level_dir = teams_base_dir(&state).join(&level);
     if !level_dir.is_dir() {
         return Err(format!("Level '{}' not found", level));
@@ -290,8 +291,10 @@ mod tests {
         let config_file = config_dir.join("config.json");
         std::fs::write(&config_file, "{}").unwrap();
 
-        let mut settings = DockSettings::default();
-        settings.reeln_config_path = Some(config_file.display().to_string());
+        let settings = DockSettings {
+            reeln_config_path: Some(config_file.display().to_string()),
+            ..Default::default()
+        };
 
         AppState {
             config: Mutex::new(None),
@@ -399,7 +402,11 @@ mod tests {
     fn load_roster_three_column_csv() {
         let dir = tempfile::tempdir().unwrap();
         let csv_path = dir.path().join("roster.csv");
-        std::fs::write(&csv_path, "#,Player,Position\n10,John,Forward\n7,Jane,Guard").unwrap();
+        std::fs::write(
+            &csv_path,
+            "#,Player,Position\n10,John,Forward\n7,Jane,Guard",
+        )
+        .unwrap();
 
         let entries = load_roster(csv_path.display().to_string()).unwrap();
         assert_eq!(entries.len(), 2);

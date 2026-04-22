@@ -1,10 +1,8 @@
 <script lang="ts">
   import { open } from "@tauri-apps/plugin-dialog";
   import { loadConfigFromPath, saveDockSettings, getConfigPath } from "$lib/ipc/config";
-  import { listSports } from "$lib/ipc/games";
   import type { AppConfig } from "$lib/types/config";
   import type { DockSettings } from "$lib/types/dock";
-  import type { SportAlias } from "$lib/types/sport";
 
   interface Props {
     onDone: (config: AppConfig, settings: DockSettings) => void;
@@ -16,7 +14,6 @@
 
   let step = $state<Step>("welcome");
   let config = $state<AppConfig | null>(null);
-  let sports = $state<SportAlias[]>([]);
   let error = $state("");
   let configPath = $state("");
   let defaultPath = $state("");
@@ -24,7 +21,6 @@
 
   $effect(() => {
     (async () => {
-      sports = await listSports();
       defaultPath = await getConfigPath();
     })();
   });

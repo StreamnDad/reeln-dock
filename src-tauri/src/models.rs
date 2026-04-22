@@ -203,7 +203,10 @@ mod tests {
         assert_eq!(deserialized.roster_path, "/rosters/acme.json");
         assert_eq!(deserialized.colors, vec!["#FF0000", "#0000FF"]);
         assert_eq!(deserialized.jersey_colors, vec!["white"]);
-        assert_eq!(deserialized.metadata.get("founded"), Some(&serde_json::json!(2020)));
+        assert_eq!(
+            deserialized.metadata.get("founded"),
+            Some(&serde_json::json!(2020))
+        );
     }
 
     #[test]

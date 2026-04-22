@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use tauri::{AppHandle, State};
 use reeln_sport::default_event_type_entries;
+use tauri::{AppHandle, State};
 
 use crate::models::GameSummary;
 use crate::orchestration::{game_ops, progress::ProgressReporter};
@@ -59,7 +59,10 @@ pub fn get_game_state(game_dir: String) -> Result<reeln_state::GameState, String
 }
 
 #[tauri::command]
-pub fn set_game_tournament(game_dir: String, tournament: String) -> Result<reeln_state::GameState, String> {
+pub fn set_game_tournament(
+    game_dir: String,
+    tournament: String,
+) -> Result<reeln_state::GameState, String> {
     let path = Path::new(&game_dir);
     let mut state = reeln_state::load_game_state(path).map_err(|e| e.to_string())?;
     reeln_state::set_tournament(&mut state, &tournament);
@@ -68,6 +71,118 @@ pub fn set_game_tournament(game_dir: String, tournament: String) -> Result<reeln
 }
 
 #[tauri::command]
+pub fn update_game_info(
+    game_dir: String,
+    field: String,
+    value: String,
+) -> Result<reeln_state::GameState, String> {
+    let path = Path::new(&game_dir);
+    let mut state = reeln_state::load_game_state(path).map_err(|e| e.to_string())?;
+    reeln_state::update_game_info_field(&mut state, &field, value).map_err(|e| e.to_string())?;
+    reeln_state::save_game_state(&state, path).map_err(|e| e.to_string())?;
+    Ok(state)
+}
+
+#[tauri::command]
+pub fn set_game_livestream(
+    game_dir: String,
+    platform: String,
+    url: String,
+) -> Result<reeln_state::GameState, String> {
+    let path = Path::new(&game_dir);
+    let mut state = reeln_state::load_game_state(path).map_err(|e| e.to_string())?;
+    reeln_state::set_livestream(&mut state, &platform, &url);
+    reeln_state::save_game_state(&state, path).map_err(|e| e.to_string())?;
+    Ok(state)
+}
+
+#[tauri::command]
+pub fn remove_game_livestream(
+    game_dir: String,
+    platform: String,
+) -> Result<reeln_state::GameState, String> {
+    let path = Path::new(&game_dir);
+    let mut state = reeln_state::load_game_state(path).map_err(|e| e.to_string())?;
+    reeln_state::remove_livestream(&mut state, &platform);
+    reeln_state::save_game_state(&state, path).map_err(|e| e.to_string())?;
+    Ok(state)
+}
+
+/// Discover a game image by convention: `{date}_{home_slug}_vs_{away_slug}.png`
+/// in the configured game_image_output_dir.
+#[tauri::command]
+pub fn discover_game_image(
+    state: State<'_, AppState>,
+    game_dir: String,
+) -> Result<Option<String>, String> {
+    let path = Path::new(&game_dir);
+    let gs = reeln_state::load_game_state(path).map_err(|e| e.to_string())?;
+
+    // If thumbnail is already set and exists, return it
+    if !gs.game_info.thumbnail.is_empty() {
+        let thumb = Path::new(&gs.game_info.thumbnail);
+        if thumb.exists() {
+            return Ok(Some(gs.game_info.thumbnail));
+        }
+    }
+
+    // Try to discover from configured output dir
+    let config = state.config.lock().map_err(|e| e.to_string())?.clone();
+    let config = match config {
+        Some(c) => c,
+        None => return Ok(None),
+    };
+
+    let output_dir = config
+        .plugins
+        .settings
+        .get("openai")
+        .and_then(|v| v.as_object())
+        .and_then(|o| o.get("game_image_output_dir"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    if output_dir.is_empty() {
+        return Ok(None);
+    }
+
+    let home_slug = if gs.game_info.home_slug.is_empty() {
+        slugify(&gs.game_info.home_team)
+    } else {
+        gs.game_info.home_slug.clone()
+    };
+    let away_slug = if gs.game_info.away_slug.is_empty() {
+        slugify(&gs.game_info.away_team)
+    } else {
+        gs.game_info.away_slug.clone()
+    };
+    let date_slug = gs.game_info.date.replace('/', "-");
+
+    let filename = format!("{}_{}_vs_{}.png", date_slug, home_slug, away_slug);
+    let candidate = Path::new(output_dir).join(&filename);
+    if candidate.exists() {
+        return Ok(Some(candidate.display().to_string()));
+    }
+
+    Ok(None)
+}
+
+fn slugify(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string()
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn init_game(
     state: State<'_, AppState>,
     sport: String,
@@ -139,7 +254,13 @@ pub async fn process_segment(
     let game_path = PathBuf::from(&game_dir);
 
     let result = tokio::task::spawn_blocking(move || {
-        game_ops::process_segment(&backend, &config, &game_path, segment_number, Some(&reporter))
+        game_ops::process_segment(
+            &backend,
+            &config,
+            &game_path,
+            segment_number,
+            Some(&reporter),
+        )
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -203,9 +324,7 @@ pub struct EventTypeResponse {
 }
 
 #[tauri::command]
-pub fn get_event_types(
-    state: State<'_, AppState>,
-) -> Result<Vec<EventTypeResponse>, String> {
+pub fn get_event_types(state: State<'_, AppState>) -> Result<Vec<EventTypeResponse>, String> {
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let config = config.as_ref().ok_or("Config not loaded")?;
 
@@ -255,7 +374,7 @@ pub fn prune_renders(game_dir: String) -> Result<serde_json::Value, String> {
     let total = reeln_state::clear_renders(&mut state);
     reeln_state::save_game_state(&state, path).map_err(|e| e.to_string())?;
 
-    serde_json::to_value(&serde_json::json!({
+    serde_json::to_value(serde_json::json!({
         "state": state,
         "removed_files": removed,
         "cleared_entries": total,
@@ -266,7 +385,9 @@ pub fn prune_renders(game_dir: String) -> Result<serde_json::Value, String> {
 
 // ── Game prune (CLI-parity) ──────────────────────────────────────
 
-const VIDEO_EXTENSIONS: &[&str] = &[".mkv", ".mp4", ".mov", ".avi", ".webm", ".ts", ".m4v", ".flv"];
+const VIDEO_EXTENSIONS: &[&str] = &[
+    ".mkv", ".mp4", ".mov", ".avi", ".webm", ".ts", ".m4v", ".flv",
+];
 const TEMP_EXTENSIONS: &[&str] = &[".tmp", ".txt"];
 
 /// Result of a prune dry-run or execution.
@@ -315,18 +436,24 @@ pub fn prune_game_preview(
         .filter(|e| !e.event_type.is_empty())
         .map(|e| e.clip.clone())
         .collect();
-    let all_event_clips: std::collections::HashSet<String> = state
-        .events
-        .iter()
-        .map(|e| e.clip.clone())
-        .collect();
+    let all_event_clips: std::collections::HashSet<String> =
+        state.events.iter().map(|e| e.clip.clone()).collect();
     let force = force.unwrap_or(false);
 
     let mut files = Vec::new();
     let mut total_bytes = 0u64;
 
     // Collect pruneable files
-    collect_pruneable_files(dir, dir, &tagged_clips, &all_event_clips, all_files, force, &mut files, &mut total_bytes);
+    collect_pruneable_files(
+        dir,
+        dir,
+        &tagged_clips,
+        &all_event_clips,
+        all_files,
+        force,
+        &mut files,
+        &mut total_bytes,
+    );
 
     // Debug directory
     let debug_path = dir.join("debug");
@@ -365,18 +492,24 @@ pub fn prune_game_execute(
         .filter(|e| !e.event_type.is_empty())
         .map(|e| e.clip.clone())
         .collect();
-    let all_event_clips: std::collections::HashSet<String> = state
-        .events
-        .iter()
-        .map(|e| e.clip.clone())
-        .collect();
+    let all_event_clips: std::collections::HashSet<String> =
+        state.events.iter().map(|e| e.clip.clone()).collect();
     let force = force.unwrap_or(false);
 
     let mut files = Vec::new();
     let mut total_bytes = 0u64;
 
     // Collect and remove files
-    collect_pruneable_files(dir, dir, &tagged_clips, &all_event_clips, all_files, force, &mut files, &mut total_bytes);
+    collect_pruneable_files(
+        dir,
+        dir,
+        &tagged_clips,
+        &all_event_clips,
+        all_files,
+        force,
+        &mut files,
+        &mut total_bytes,
+    );
 
     // Debug directory
     let debug_path = dir.join("debug");
@@ -416,6 +549,7 @@ pub fn prune_game_execute(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_pruneable_files(
     base_dir: &Path,
     scan_dir: &Path,
@@ -453,7 +587,10 @@ fn collect_pruneable_files(
             if TEMP_EXTENSIONS.contains(&ext.as_str()) {
                 let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                 *total_bytes += size;
-                files.push(PruneFileEntry { path: rel_str, bytes: size });
+                files.push(PruneFileEntry {
+                    path: rel_str,
+                    bytes: size,
+                });
                 continue;
             }
 
@@ -466,7 +603,10 @@ fn collect_pruneable_files(
             if all_files {
                 let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                 *total_bytes += size;
-                files.push(PruneFileEntry { path: rel_str, bytes: size });
+                files.push(PruneFileEntry {
+                    path: rel_str,
+                    bytes: size,
+                });
                 continue;
             }
 
@@ -485,7 +625,10 @@ fn collect_pruneable_files(
 
             let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
             *total_bytes += size;
-            files.push(PruneFileEntry { path: rel_str, bytes: size });
+            files.push(PruneFileEntry {
+                path: rel_str,
+                bytes: size,
+            });
         }
     }
 }
@@ -822,6 +965,100 @@ mod tests {
 
         let reloaded = reeln_state::load_game_state(&game_dir).unwrap();
         assert_eq!(reloaded.game_info.tournament, "Cup 2026");
+    }
+
+    // ── update_game_info ──────────────────────────────────────────────
+
+    #[test]
+    fn update_game_info_sets_field_and_persists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        crate::test_utils::create_test_game(&game_dir);
+
+        let result = update_game_info(
+            game_dir.display().to_string(),
+            "venue".into(),
+            "Main Arena".into(),
+        )
+        .unwrap();
+        assert_eq!(result.game_info.venue, "Main Arena");
+
+        let reloaded = reeln_state::load_game_state(&game_dir).unwrap();
+        assert_eq!(reloaded.game_info.venue, "Main Arena");
+    }
+
+    #[test]
+    fn update_game_info_rejects_unknown_field() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        crate::test_utils::create_test_game(&game_dir);
+
+        let err = update_game_info(game_dir.display().to_string(), "bogus".into(), "val".into())
+            .unwrap_err();
+        assert!(err.contains("Unknown game_info field"));
+    }
+
+    #[test]
+    fn update_game_info_parses_numeric_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        crate::test_utils::create_test_game(&game_dir);
+
+        let result = update_game_info(
+            game_dir.display().to_string(),
+            "period_length".into(),
+            "20".into(),
+        )
+        .unwrap();
+        assert_eq!(result.game_info.period_length, 20);
+    }
+
+    // ── set_game_livestream / remove_game_livestream ───────────────────
+
+    #[test]
+    fn set_game_livestream_adds_and_persists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        crate::test_utils::create_test_game(&game_dir);
+
+        let result = set_game_livestream(
+            game_dir.display().to_string(),
+            "youtube".into(),
+            "https://youtube.com/live/123".into(),
+        )
+        .unwrap();
+        assert_eq!(
+            result.livestreams.get("youtube").unwrap(),
+            "https://youtube.com/live/123"
+        );
+
+        let reloaded = reeln_state::load_game_state(&game_dir).unwrap();
+        assert_eq!(
+            reloaded.livestreams.get("youtube").unwrap(),
+            "https://youtube.com/live/123"
+        );
+    }
+
+    #[test]
+    fn remove_game_livestream_removes_and_persists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        crate::test_utils::create_test_game(&game_dir);
+
+        // Add then remove
+        set_game_livestream(
+            game_dir.display().to_string(),
+            "youtube".into(),
+            "https://youtube.com/live/123".into(),
+        )
+        .unwrap();
+
+        let result =
+            remove_game_livestream(game_dir.display().to_string(), "youtube".into()).unwrap();
+        assert!(!result.livestreams.contains_key("youtube"));
+
+        let reloaded = reeln_state::load_game_state(&game_dir).unwrap();
+        assert!(!reloaded.livestreams.contains_key("youtube"));
     }
 
     // ── bulk_update_event_type ─────────────────────────────────────────

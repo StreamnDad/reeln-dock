@@ -47,9 +47,7 @@ struct PluginRegistry {
 /// List config profile files in the config directory.
 /// Discovers `config.*.json` files plus the active config.
 #[tauri::command]
-pub fn list_config_profiles(
-    state: State<'_, AppState>,
-) -> Result<Vec<ConfigProfile>, String> {
+pub fn list_config_profiles(state: State<'_, AppState>) -> Result<Vec<ConfigProfile>, String> {
     let config_dir = state.effective_config_dir();
     let settings = state.dock_settings.lock().map_err(|e| e.to_string())?;
     let active_path = settings.reeln_config_path.clone().unwrap_or_default();
@@ -116,9 +114,7 @@ pub fn list_config_profiles(
 
 /// List plugins and their settings from a specific config profile.
 #[tauri::command]
-pub fn list_plugins_for_profile(
-    profile_path: String,
-) -> Result<Vec<PluginDetail>, String> {
+pub fn list_plugins_for_profile(profile_path: String) -> Result<Vec<PluginDetail>, String> {
     let config = load_config_file(&profile_path)?;
     let mut plugins = Vec::new();
 
@@ -263,16 +259,13 @@ pub fn update_plugin_in_config(
 /// Tries workspace-relative path first, then the configured registry URL,
 /// then the default GitHub raw URL.
 #[tauri::command]
-pub fn fetch_plugin_registry(
-    state: State<'_, AppState>,
-) -> Result<Vec<RegistryPlugin>, String> {
+pub fn fetch_plugin_registry(state: State<'_, AppState>) -> Result<Vec<RegistryPlugin>, String> {
     // 1. Try workspace-relative path (dev mode)
     let workspace_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../reeln-cli/registry/plugins.json");
     if workspace_path.is_file() {
         let content = std::fs::read_to_string(&workspace_path).map_err(|e| e.to_string())?;
-        let registry: PluginRegistry =
-            serde_json::from_str(&content).map_err(|e| e.to_string())?;
+        let registry: PluginRegistry = serde_json::from_str(&content).map_err(|e| e.to_string())?;
         return Ok(registry.plugins);
     }
 
@@ -280,8 +273,7 @@ pub fn fetch_plugin_registry(
     let config_registry = state.effective_config_dir().join("registry/plugins.json");
     if config_registry.is_file() {
         let content = std::fs::read_to_string(&config_registry).map_err(|e| e.to_string())?;
-        let registry: PluginRegistry =
-            serde_json::from_str(&content).map_err(|e| e.to_string())?;
+        let registry: PluginRegistry = serde_json::from_str(&content).map_err(|e| e.to_string())?;
         return Ok(registry.plugins);
     }
 
@@ -325,11 +317,7 @@ pub fn add_plugin_to_config(
 
     if !in_enabled && !in_disabled {
         // Add to enabled
-        let arr = plugins
-            .get_mut("enabled")
-            .unwrap()
-            .as_array_mut()
-            .unwrap();
+        let arr = plugins.get_mut("enabled").unwrap().as_array_mut().unwrap();
         arr.push(name_val);
 
         // Create empty settings entry
@@ -427,9 +415,7 @@ pub fn create_config_profile(
 
 /// Get version information for the app and config.
 #[tauri::command]
-pub fn get_version_info(
-    state: State<'_, AppState>,
-) -> Result<VersionInfo, String> {
+pub fn get_version_info(state: State<'_, AppState>) -> Result<VersionInfo, String> {
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let config_version = config.as_ref().map(|c| c.config_version);
 
@@ -505,7 +491,10 @@ pub fn set_enforce_hooks(
         .and_then(|p| p.as_object_mut())
         .ok_or("Config missing 'plugins' section")?;
 
-    plugins.insert("enforce_hooks".to_string(), serde_json::Value::Bool(enforce));
+    plugins.insert(
+        "enforce_hooks".to_string(),
+        serde_json::Value::Bool(enforce),
+    );
 
     save_raw_config(&profile_path, &raw)?;
     reload_if_active(&profile_path, &state)?;
@@ -779,4 +768,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-

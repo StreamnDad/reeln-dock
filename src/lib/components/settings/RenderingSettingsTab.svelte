@@ -6,6 +6,8 @@
   import { listConfigProfiles } from "$lib/ipc/plugins";
   import { getActiveFieldsForScreen } from "$lib/stores/pluginUI.svelte";
   import DynamicPluginFields from "$lib/components/content/DynamicPluginFields.svelte";
+  import HelpLink from "$lib/components/HelpLink.svelte";
+  import { help } from "$lib/help";
   import type { RenderProfile, EventTypeEntry } from "$lib/types/config";
   import type { ConfigProfile } from "$lib/types/plugin";
   import type { RenderingDefaults } from "$lib/types/dock";
@@ -161,7 +163,7 @@
 
   <!-- Default Profile -->
   <div class="bg-surface rounded-lg border border-border p-4 space-y-3">
-    <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">Default Profile</h3>
+    <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">Default Profile <HelpLink {...help["render.default_profile"]} /></h3>
     <select
       bind:value={defaultProfile}
       class="w-full px-3 py-1.5 bg-bg border border-border rounded text-sm text-text focus:outline-none focus:border-secondary"
@@ -173,7 +175,7 @@
     </select>
 
     <div>
-      <label class="block text-xs text-text-muted mb-1" for="default-plugin-profile">Default Plugin Profile</label>
+      <label class="block text-xs text-text-muted mb-1" for="default-plugin-profile">Default Plugin Profile <HelpLink {...help["plugins.profile"]} /></label>
       <select
         id="default-plugin-profile"
         bind:value={defaultPluginProfile}
@@ -189,11 +191,11 @@
 
     <label class="flex items-center gap-2 text-sm text-text-muted cursor-pointer">
       <input type="checkbox" bind:checked={concatByDefault} class="accent-secondary" />
-      Concatenate multi-format renders by default
+      Concatenate multi-format renders by default <HelpLink {...help["render.concat"]} />
     </label>
 
     <div>
-      <label class="block text-xs text-text-muted mb-1">Default Render Mode</label>
+      <label class="block text-xs text-text-muted mb-1">Default Render Mode <HelpLink {...help["render.mode"]} /></label>
       <div class="flex gap-1">
         <button
           class="flex-1 px-2 py-1.5 rounded text-xs font-medium transition-colors text-center"
@@ -237,7 +239,7 @@
 
   <!-- Render Override Defaults -->
   <div class="bg-surface rounded-lg border border-border p-4 space-y-4">
-    <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">Render Overrides</h3>
+    <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">Render Overrides <HelpLink {...help["render.default_profile"]} /></h3>
     <p class="text-xs text-text-muted">Default overrides applied to all renders unless changed per-clip.</p>
 
     <div>
@@ -277,7 +279,7 @@
 
   <!-- Iteration Mappings -->
   <div class="bg-surface rounded-lg border border-border p-4 space-y-4">
-    <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">Iteration Mappings</h3>
+    <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">Iteration Mappings <HelpLink {...help["render.iteration_mappings"]} /></h3>
     <p class="text-xs text-text-muted">Configure which render profiles are used for each event type.</p>
 
     {#each Object.entries(mappings) as [eventType, profileNames]}

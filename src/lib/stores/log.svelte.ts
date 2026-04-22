@@ -1,5 +1,7 @@
 /** Application-level logging store with level filtering. */
 
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export interface LogEntry {
@@ -9,11 +11,28 @@ export interface LogEntry {
   message: string;
 }
 
+interface DockLogEvent {
+  level: string;
+  source: string;
+  message: string;
+}
+
 const LEVEL_ORDER: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
-const MAX_ENTRIES = 500;
+const MAX_ENTRIES = 1000;
 
 let entries = $state<LogEntry[]>([]);
 let minLevel = $state<LogLevel>("debug");
+let unlisten: UnlistenFn | null = null;
+
+/** Start listening for backend log events. Call once during app init. */
+export async function initLogListener(): Promise<void> {
+  if (unlisten) return;
+  unlisten = await listen<DockLogEvent>("dock:log", (event) => {
+    const { level, source, message } = event.payload;
+    const validLevel = level in LEVEL_ORDER ? (level as LogLevel) : "info";
+    push(validLevel, source, message);
+  });
+}
 
 export function getLogEntries(): LogEntry[] {
   const min = LEVEL_ORDER[minLevel];

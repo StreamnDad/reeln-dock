@@ -1,11 +1,13 @@
 <script lang="ts">
-  import type { GameSummary, GameEvent, RenderEntry } from "$lib/types/game";
+  import { convertFileSrc } from "@tauri-apps/api/core";
+  import type { GameSummary, GameEvent, GameInfo, RenderEntry } from "$lib/types/game";
   import type { EventTypeEntry } from "$lib/types/config";
-  import { updateGameEvent, bulkUpdateEventType, getEventTypes, processSegment, mergeHighlights, finishGame, pruneRenders, executePluginHook } from "$lib/ipc/games";
+  import { updateGameEvent, updateGameInfo, setGameLivestream, removeGameLivestream, bulkUpdateEventType, getEventTypes, processSegment, mergeHighlights, finishGame, pruneRenders, executePluginHook, discoverGameImage } from "$lib/ipc/games";
   import { log } from "$lib/stores/log.svelte";
   import { lookupTeam } from "$lib/stores/teams.svelte";
   import { getDockSettings } from "$lib/stores/config.svelte";
   import * as uiPrefs from "$lib/stores/uiPrefs.svelte";
+  import TeamLogo from "$lib/components/TeamLogo.svelte";
   import RenderPlaybackModal from "./RenderPlaybackModal.svelte";
   import PrunePreviewModal from "./PrunePreviewModal.svelte";
   import DeleteGameModal from "./DeleteGameModal.svelte";
@@ -310,7 +312,15 @@
       const result = await executePluginHook("on_game_init", contextData, {}, configPath);
 
       if (result.success) {
-        log.info("GameView", "Game image regenerated");
+        // Extract image path from shared context and persist to game state
+        const gameImage = result.shared?.game_image as { image_path?: string } | undefined;
+        if (gameImage?.image_path) {
+          const newState = await updateGameInfo(game.dir_path, "thumbnail", gameImage.image_path);
+          onUpdateGame?.(game.dir_path, (g) => ({ ...g, state: newState }));
+          log.info("GameView", `Game image regenerated: ${gameImage.image_path}`);
+        } else {
+          log.info("GameView", "Game image regenerated (no path returned)");
+        }
       } else {
         actionError = result.errors.join("\n") || "Hook execution failed";
         log.error("GameView", `Regenerate image failed: ${actionError}`);
@@ -322,46 +332,200 @@
       actionLoading = null;
     }
   }
+
+  // ── Game info inline editing ──────────────────────────────────────
+
+  let editingInfoField = $state<string | null>(null);
+  let editInfoValue = $state("");
+
+  const INFO_FIELDS: { key: keyof GameInfo; label: string; display?: (v: string | number) => string }[] = [
+    { key: "sport", label: "Sport" },
+    { key: "date", label: "Date" },
+    { key: "game_time", label: "Game Time" },
+    { key: "level", label: "Level" },
+    { key: "tournament", label: "Tournament" },
+    { key: "game_number", label: "Game Number", display: (v) => String(v) },
+    { key: "period_length", label: "Period Length", display: (v) => v ? `${v} min` : "-" },
+    { key: "venue", label: "Venue" },
+    { key: "description", label: "Description" },
+    { key: "thumbnail", label: "Thumbnail" },
+    { key: "home_slug", label: "Home Slug" },
+    { key: "away_slug", label: "Away Slug" },
+  ];
+
+  function startInfoEdit(field: string, currentValue: string | number) {
+    editingInfoField = field;
+    editInfoValue = String(currentValue);
+  }
+
+  async function commitInfoEdit() {
+    if (!editingInfoField) return;
+    const field = editingInfoField;
+    const value = editInfoValue.trim();
+    editingInfoField = null;
+    try {
+      const newState = await updateGameInfo(game.dir_path, field, value);
+      onUpdateGame?.(game.dir_path, (g) => ({ ...g, state: newState }));
+      log.info("GameView", `Updated ${field} to "${value}"`);
+    } catch (err) {
+      log.error("GameView", `Failed to update ${field}: ${err}`);
+    }
+  }
+
+  function cancelInfoEdit() {
+    editingInfoField = null;
+  }
+
+  // ── Livestream editing ────────────────────────────────────────────
+
+  let editingLivestream = $state<string | null>(null);
+  let editLivestreamValue = $state("");
+  let addingLivestream = $state(false);
+  let newPlatform = $state("");
+  let newUrl = $state("");
+
+  function startLivestreamEdit(platform: string, url: string) {
+    editingLivestream = platform;
+    editLivestreamValue = url;
+  }
+
+  async function commitLivestreamEdit() {
+    if (!editingLivestream) return;
+    const platform = editingLivestream;
+    const url = editLivestreamValue.trim();
+    editingLivestream = null;
+    if (!url) return;
+    try {
+      const newState = await setGameLivestream(game.dir_path, platform, url);
+      onUpdateGame?.(game.dir_path, (g) => ({ ...g, state: newState }));
+    } catch (err) {
+      log.error("GameView", `Failed to update livestream: ${err}`);
+    }
+  }
+
+  async function handleAddLivestream() {
+    const platform = newPlatform.trim();
+    const url = newUrl.trim();
+    if (!platform || !url) return;
+    try {
+      const newState = await setGameLivestream(game.dir_path, platform, url);
+      onUpdateGame?.(game.dir_path, (g) => ({ ...g, state: newState }));
+      newPlatform = "";
+      newUrl = "";
+      addingLivestream = false;
+    } catch (err) {
+      log.error("GameView", `Failed to add livestream: ${err}`);
+    }
+  }
+
+  async function handleRemoveLivestream(platform: string) {
+    try {
+      const newState = await removeGameLivestream(game.dir_path, platform);
+      onUpdateGame?.(game.dir_path, (g) => ({ ...g, state: newState }));
+    } catch (err) {
+      log.error("GameView", `Failed to remove livestream: ${err}`);
+    }
+  }
+
+  // Thumbnail / discovered image
+  let thumbnailError = $state(false);
+  let discoveredImage = $state<string | null>(null);
+  let prevGameDir = "";
+
+  // The effective image: explicit thumbnail > discovered image
+  let gameImagePath = $derived(
+    (info.thumbnail && !thumbnailError) ? info.thumbnail : discoveredImage
+  );
+  let gameImageSrc = $derived(
+    gameImagePath ? convertFileSrc(gameImagePath) : ""
+  );
+
+  // Discover image on game change
+  $effect(() => {
+    const dir = game.dir_path;
+    if (dir !== prevGameDir) {
+      prevGameDir = dir;
+      thumbnailError = false;
+      discoveredImage = null;
+      if (!info.thumbnail) {
+        discoverGameImage(dir).then((path) => {
+          if (path) discoveredImage = path;
+        }).catch(() => {});
+      }
+    }
+  });
+
+  // Right panel toggle
+  let showInfoPanel = $state(true);
+
+  let livestreamEntries = $derived(Object.entries(gs.livestreams).sort((a, b) => a[0].localeCompare(b[0])));
 </script>
 
 <div class="flex flex-col h-full">
-  <!-- Fixed header: back, game info, actions, filters -->
-  <div class="shrink-0 space-y-4 pb-3">
-    <!-- Back button -->
-    <button
-      class="text-sm text-text-muted hover:text-text transition-colors"
-      onclick={() => onBack?.()}
-    >
-      &larr; All Games
-    </button>
+  <!-- Hero header with background image -->
+  <div class="shrink-0 relative overflow-hidden rounded-lg mb-3">
+    {#if gameImageSrc}
+      <img
+        src={gameImageSrc}
+        alt=""
+        class="absolute inset-0 w-full h-full object-cover opacity-25 blur-sm"
+        onerror={() => { thumbnailError = true; }}
+      />
+    {/if}
+    <div class="relative z-10 px-4 py-4 space-y-3 {gameImageSrc ? 'bg-bg/60' : 'bg-surface/80'}">
+      <!-- Back + info toggle -->
+      <div class="flex items-center justify-between">
+        <button
+          class="text-sm text-text-muted hover:text-text transition-colors"
+          onclick={() => onBack?.()}
+        >&larr; All Games</button>
+        <button
+          class="text-xs text-text-muted hover:text-text transition-colors px-2 py-1 rounded border border-border/50"
+          onclick={() => showInfoPanel = !showInfoPanel}
+        >{showInfoPanel ? "Hide Details" : "Show Details"}</button>
+      </div>
 
-    <!-- Game Header -->
-    <div class="flex items-start justify-between">
-      <div>
-        <h2 class="text-xl font-bold">{info.home_team} vs {info.away_team}</h2>
-        <div class="flex items-center gap-3 mt-1 text-sm text-text-muted">
-          <span>{info.date}</span>
-          <span>{info.sport}</span>
-          {#if info.venue}
-            <span>{info.venue}</span>
+      <!-- Team header -->
+      <div class="flex items-center gap-4">
+        <div class="flex items-center gap-3 flex-1 min-w-0">
+          <TeamLogo teamName={info.home_team} size="lg" />
+          <div class="min-w-0">
+            <h2 class="text-xl font-bold truncate">{info.home_team} vs {info.away_team}</h2>
+            <div class="flex items-center gap-2 mt-0.5 text-sm text-text-muted flex-wrap">
+              <span>{info.date}</span>
+              <span>{info.sport}</span>
+              {#if info.venue}<span>{info.venue}</span>{/if}
+              {#if info.game_time}<span>{info.game_time}</span>{/if}
+              {#if info.level}<span class="px-1.5 py-0.5 rounded bg-bg/50 border border-border/50 text-xs">{info.level}</span>{/if}
+              {#if info.tournament}<span class="text-secondary">{info.tournament}</span>{/if}
+            </div>
+          </div>
+          <TeamLogo teamName={info.away_team} size="lg" />
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <button
+            class="px-3 py-1.5 text-xs font-medium text-text-muted hover:text-secondary border border-border hover:border-secondary/30 rounded-lg transition-colors disabled:opacity-50"
+            disabled={actionLoading === "regen-image"}
+            onclick={handleRegenerateImage}
+          >
+            {actionLoading === "regen-image" ? "Generating..." : "Regenerate Image"}
+          </button>
+          {#if gs.finished}
+            <span class="px-3 py-1 rounded-full bg-green-900/80 text-green-300 text-sm">Finished</span>
+          {:else}
+            <span class="px-3 py-1 rounded-full bg-blue-900/80 text-secondary text-sm">In Progress</span>
           {/if}
         </div>
       </div>
-      <div class="flex items-center gap-2">
-        <button
-          class="px-3 py-1.5 text-xs font-medium text-text-muted hover:text-secondary border border-border hover:border-secondary/30 rounded-lg transition-colors disabled:opacity-50"
-          disabled={actionLoading === "regen-image"}
-          onclick={handleRegenerateImage}
-        >
-          {actionLoading === "regen-image" ? "Generating..." : "Regenerate Image"}
-        </button>
-        {#if gs.finished}
-          <span class="px-3 py-1 rounded-full bg-green-900 text-green-300 text-sm">Finished</span>
-        {:else}
-          <span class="px-3 py-1 rounded-full bg-blue-900 text-secondary text-sm">In Progress</span>
-        {/if}
-      </div>
+
+      {#if info.description}
+        <p class="text-sm text-text-muted italic">{info.description}</p>
+      {/if}
     </div>
+  </div>
+
+  <!-- Fixed controls: actions + filters -->
+  <div class="shrink-0 space-y-3 pb-3">
 
     <!-- Game Actions -->
     {#if !gs.finished}
@@ -475,8 +639,10 @@
     {/if}
   </div>
 
-  <!-- Scrollable: events + renders as collapsible sections -->
-  <div class="flex-1 overflow-y-auto min-h-0 space-y-4">
+  <!-- Main content: split layout -->
+  <div class="flex-1 flex gap-4 min-h-0">
+    <!-- Left: events + renders (main workspace) -->
+    <div class="flex-1 overflow-y-auto min-h-0 space-y-4">
     <!-- Events (collapsible) -->
     <div>
       <button
@@ -758,6 +924,172 @@
         <p class="text-[11px] text-text-muted mt-1">Permanently remove the entire game directory.</p>
       </div>
     </div>
+    </div>
+
+    <!-- Right: Info panel (Finder-style) -->
+    {#if showInfoPanel}
+      <div class="w-72 shrink-0 overflow-y-auto min-h-0 space-y-4">
+        <!-- Game Image -->
+        {#if gameImageSrc}
+          <div class="rounded-lg overflow-hidden border border-border">
+            <img
+              src={gameImageSrc}
+              alt="Game thumbnail"
+              class="w-full object-cover"
+              onerror={() => { thumbnailError = true; }}
+            />
+          </div>
+        {/if}
+
+        <!-- Quick Info -->
+        <div class="bg-surface rounded-lg border border-border p-3 space-y-2 text-sm">
+          <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">Details</h3>
+          {#each INFO_FIELDS as { key, label, display }}
+            {@const val = info[key]}
+            {#if val || editingInfoField === key}
+              <div class="flex justify-between gap-2">
+                <span class="text-text-muted shrink-0">{label}</span>
+                {#if editingInfoField === key}
+                  <!-- svelte-ignore a11y_autofocus -->
+                  <input
+                    type="text"
+                    bind:value={editInfoValue}
+                    class="w-24 px-1 py-0.5 bg-bg border border-secondary rounded text-xs text-text text-right focus:outline-none"
+                    onkeydown={(e) => { if (e.key === "Enter") commitInfoEdit(); if (e.key === "Escape") cancelInfoEdit(); }}
+                    onblur={commitInfoEdit}
+                    autofocus
+                  />
+                {:else}
+                  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+                  <span
+                    class="text-text truncate text-right hover:underline hover:decoration-dotted cursor-text"
+                    title={String(val)}
+                    ondblclick={() => startInfoEdit(key, val)}
+                  >
+                    {display ? display(val) : String(val)}
+                  </span>
+                {/if}
+              </div>
+            {/if}
+          {/each}
+        </div>
+
+        <!-- Livestreams -->
+        {#if livestreamEntries.length > 0 || addingLivestream}
+          <div class="bg-surface rounded-lg border border-border p-3 space-y-2 text-sm">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">Livestreams</h3>
+            {#each livestreamEntries as [platform, url]}
+              <div class="space-y-0.5">
+                <div class="flex items-center justify-between">
+                  <span class="text-text-muted text-xs capitalize">{platform}</span>
+                  <button
+                    class="text-[10px] text-text-muted hover:text-accent transition-colors"
+                    onclick={() => handleRemoveLivestream(platform)}
+                  >&times;</button>
+                </div>
+                {#if editingLivestream === platform}
+                  <!-- svelte-ignore a11y_autofocus -->
+                  <input
+                    type="text"
+                    bind:value={editLivestreamValue}
+                    class="w-full px-1 py-0.5 bg-bg border border-secondary rounded text-xs text-text focus:outline-none"
+                    onkeydown={(e) => { if (e.key === "Enter") commitLivestreamEdit(); if (e.key === "Escape") { editingLivestream = null; } }}
+                    onblur={commitLivestreamEdit}
+                    autofocus
+                  />
+                {:else}
+                  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+                  <a
+                    href={url}
+                    target="_blank"
+                    rel="noopener"
+                    class="text-secondary text-xs truncate block hover:underline"
+                    title={url}
+                    ondblclick={(e) => { e.preventDefault(); startLivestreamEdit(platform, url); }}
+                  >{url}</a>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/if}
+
+        <!-- Add Livestream -->
+        {#if addingLivestream}
+          <div class="bg-surface rounded-lg border border-border p-3 space-y-2 text-sm">
+            <input
+              type="text"
+              bind:value={newPlatform}
+              placeholder="Platform"
+              class="w-full px-2 py-1 bg-bg border border-border rounded text-xs text-text focus:outline-none focus:border-secondary"
+            />
+            <input
+              type="text"
+              bind:value={newUrl}
+              placeholder="URL"
+              class="w-full px-2 py-1 bg-bg border border-border rounded text-xs text-text focus:outline-none focus:border-secondary"
+              onkeydown={(e) => { if (e.key === "Enter") handleAddLivestream(); }}
+            />
+            <div class="flex gap-1">
+              <button
+                class="flex-1 px-2 py-1 bg-primary hover:bg-primary-light text-text rounded text-xs transition-colors disabled:opacity-50"
+                onclick={handleAddLivestream}
+                disabled={!newPlatform.trim() || !newUrl.trim()}
+              >Add</button>
+              <button
+                class="px-2 py-1 text-xs text-text-muted hover:text-text transition-colors"
+                onclick={() => { addingLivestream = false; newPlatform = ""; newUrl = ""; }}
+              >Cancel</button>
+            </div>
+          </div>
+        {:else}
+          <button
+            class="text-xs text-secondary hover:text-text transition-colors"
+            onclick={() => addingLivestream = true}
+          >+ Add Livestream</button>
+        {/if}
+
+        <!-- State -->
+        <div class="bg-surface rounded-lg border border-border p-3 space-y-2 text-sm">
+          <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">State</h3>
+          <div class="flex justify-between">
+            <span class="text-text-muted">Created</span>
+            <span class="text-text text-xs">{gs.created_at ? gs.created_at.split("T")[0] : "-"}</span>
+          </div>
+          {#if gs.finished}
+            <div class="flex justify-between">
+              <span class="text-text-muted">Finished</span>
+              <span class="text-text text-xs">{gs.finished_at ? gs.finished_at.split("T")[0] : "-"}</span>
+            </div>
+          {/if}
+          <div class="flex justify-between">
+            <span class="text-text-muted">Highlighted</span>
+            {#if gs.highlighted}
+              <span class="text-green-400 text-xs">Yes</span>
+            {:else}
+              <span class="text-text-muted text-xs">No</span>
+            {/if}
+          </div>
+          <div class="flex justify-between">
+            <span class="text-text-muted">Segments</span>
+            <span class="text-text text-xs">{gs.segments_processed.length}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-text-muted">Events</span>
+            <span class="text-text text-xs">{gs.events.length}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-text-muted">Renders</span>
+            <span class="text-text text-xs">{gs.renders.length}</span>
+          </div>
+          {#if gs.highlights_output}
+            <div>
+              <span class="text-text-muted block">Highlights</span>
+              <span class="text-text text-xs truncate block" title={gs.highlights_output}>{gs.highlights_output.split("/").pop()}</span>
+            </div>
+          {/if}
+        </div>
+      </div>
+    {/if}
   </div>
 </div>
 
