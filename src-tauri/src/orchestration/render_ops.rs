@@ -1137,17 +1137,18 @@ pub fn cleanup_proxy_cache(proxy_dir: &Path, max_age: std::time::Duration) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-
     /// Create a script that dumps its CLI args to a file, then exits with code 1
     /// so render_via_cli returns early (before trying to load game state post-render).
     fn make_arg_dump_script(dir: &Path, args_file: &Path) -> PathBuf {
         let script = dir.join("fake_reeln.sh");
-        let mut f = std::fs::File::create(&script).unwrap();
-        writeln!(f, "#!/bin/sh").unwrap();
-        writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
-        writeln!(f, "echo 'test failure' >&2").unwrap();
-        writeln!(f, "exit 1").unwrap();
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"{}\"\necho 'test failure' >&2\nexit 1\n",
+                args_file.display()
+            ),
+        )
+        .unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
