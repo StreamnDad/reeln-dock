@@ -28,7 +28,8 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
                 .website_label(Some("streamn.dad"))
                 .credits(Some(
                     "Built with Tauri, Svelte, and reeln-core.\n\
-                     Powered by FFmpeg and the reeln plugin ecosystem.",
+                     Powered by FFmpeg and the reeln plugin ecosystem.\n\n\
+                     https://github.com/StreamnDad/reeln-dock",
                 ))
                 .icon(icon)
                 .build(),
