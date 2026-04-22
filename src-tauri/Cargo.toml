@@ -24,6 +24,7 @@ reeln-plugin = { path = "../../reeln-core/crates/reeln-plugin" }
 tokio = { version = "1", features = ["rt", "sync"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
+open = "5"
 
 [dev-dependencies]
 tempfile = "3"

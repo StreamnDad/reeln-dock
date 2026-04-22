@@ -20,6 +20,7 @@
   import { initQueue } from "$lib/stores/renderQueue.svelte";
   import { initPluginUI } from "$lib/stores/pluginUI.svelte";
   import { initLogListener } from "$lib/stores/log.svelte";
+  import { listen } from "@tauri-apps/api/event";
   import { loadTournamentMetadata, isArchived } from "$lib/stores/tournaments.svelte";
   import { loadAllTeams } from "$lib/stores/teams.svelte";
   import { settingsTeamTarget, settingsTournamentTarget, editingQueueItem } from "$lib/stores/navigation";
@@ -119,6 +120,19 @@
     initJobListener().catch((e) => log.error("Jobs", `Failed to init listener: ${e}`));
     initQueue().catch((e) => log.error("RenderQueue", `Failed to load queue: ${e}`));
     initPluginUI().catch((e) => log.error("PluginUI", `Failed to init: ${e}`));
+
+    // Native menu bar navigation
+    listen<string>("menu:navigate", (event) => {
+      const map: Record<string, View> = {
+        nav_games: "games",
+        nav_queue: "queue",
+        nav_plugins: "plugins",
+        nav_registry: "registry",
+        nav_settings: "settings",
+      };
+      const target = map[event.payload];
+      if (target) setView(target);
+    });
   });
 
   // React to edit-from-queue navigation requests

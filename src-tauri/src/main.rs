@@ -2,6 +2,7 @@
 
 mod commands;
 mod dock_log;
+mod menu;
 mod models;
 mod orchestration;
 mod state;
@@ -42,6 +43,14 @@ fn main() {
                 app_data_dir,
                 media_backend: Arc::new(LibavBackend::new()),
                 auth_child_pid: Arc::new(Mutex::new(None)),
+            });
+
+            // Build and set custom menu bar
+            let app_handle = app.handle().clone();
+            let app_menu = menu::build(&app_handle)?;
+            app.set_menu(app_menu)?;
+            app.on_menu_event(move |_app, event| {
+                menu::handle_event(&app_handle, &event);
             });
 
             Ok(())

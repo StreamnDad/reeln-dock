@@ -3047,6 +3047,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "filetime",
+ "open",
  "reeln-config",
  "reeln-media",
  "reeln-overlay",
