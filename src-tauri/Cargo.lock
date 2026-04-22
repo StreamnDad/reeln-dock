@@ -3003,7 +3003,7 @@ dependencies = [
 
 [[package]]
 name = "reeln-config"
-version = "0.2.0"
+version = "0.2.3"
 dependencies = [
  "dirs",
  "log",
@@ -3036,7 +3036,7 @@ dependencies = [
 
 [[package]]
 name = "reeln-media"
-version = "0.2.0"
+version = "0.2.3"
 dependencies = [
  "ffmpeg-next",
  "image",
@@ -3047,7 +3047,7 @@ dependencies = [
 
 [[package]]
 name = "reeln-overlay"
-version = "0.2.0"
+version = "0.2.3"
 dependencies = [
  "cosmic-text",
  "image",
@@ -3061,7 +3061,7 @@ dependencies = [
 
 [[package]]
 name = "reeln-plugin"
-version = "0.2.0"
+version = "0.2.3"
 dependencies = [
  "libloading 0.8.9",
  "log",
@@ -3072,7 +3072,7 @@ dependencies = [
 
 [[package]]
 name = "reeln-sport"
-version = "0.2.0"
+version = "0.2.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -3081,7 +3081,7 @@ dependencies = [
 
 [[package]]
 name = "reeln-state"
-version = "0.2.0"
+version = "0.2.3"
 dependencies = [
  "chrono",
  "glob",
