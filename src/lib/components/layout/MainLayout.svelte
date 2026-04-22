@@ -1,6 +1,7 @@
 <script lang="ts">
   import Header from "./Header.svelte";
   import DragGhost from "$lib/components/DragGhost.svelte";
+  import UpdateBanner from "$lib/components/UpdateBanner.svelte";
   import PluginManager from "$lib/components/plugins/PluginManager.svelte";
   import PluginRegistryView from "$lib/components/plugins/PluginRegistryView.svelte";
   import SettingsView from "$lib/components/settings/SettingsView.svelte";
@@ -184,6 +185,7 @@
 <svelte:window onpointermove={handlePointerMove} onpointerup={handlePointerUp} onkeydown={handleKeyDown} />
 
 <div class="flex flex-col h-screen w-screen">
+  <UpdateBanner />
   <Header currentView={view} {setView} />
 
   <!-- Everything inline, no snippets, no child routing components -->

@@ -87,6 +87,9 @@ pub struct DockSettings {
     /// Rendering default preferences (iteration mappings, default profile, etc.).
     #[serde(default)]
     pub rendering: RenderingDefaults,
+    /// Unix timestamp of last update check (for once-per-day throttling).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_update_check: Option<u64>,
 }
 
 impl DockSettings {

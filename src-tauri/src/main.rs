@@ -8,12 +8,13 @@ mod orchestration;
 mod state;
 #[cfg(test)]
 mod test_utils;
+mod update_check;
 
 use std::sync::{Arc, Mutex};
 
 use reeln_media::LibavBackend;
 use reeln_sport::SportRegistry;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use state::{AppState, DockSettings};
 
@@ -49,9 +50,40 @@ fn main() {
             let app_handle = app.handle().clone();
             let app_menu = menu::build(&app_handle)?;
             app.set_menu(app_menu)?;
-            app.on_menu_event(move |_app, event| {
-                menu::handle_event(&app_handle, &event);
+            app.on_menu_event(move |app_ref, event| {
+                let id = event.id().0.as_str();
+                if id == "check_updates" {
+                    let ah = app_ref.clone();
+                    std::thread::spawn(move || {
+                        let dock_ver = env!("CARGO_PKG_VERSION");
+                        let cli_ver = ah.try_state::<AppState>().and_then(|s| {
+                            let settings = s.dock_settings.lock().ok()?;
+                            let cli = orchestration::hook_executor::detect_reeln_cli(
+                                settings.reeln_cli_path.as_deref(),
+                            )
+                            .ok()?;
+                            let out = std::process::Command::new(&cli)
+                                .arg("--version")
+                                .output()
+                                .ok()?;
+                            let stdout = String::from_utf8_lossy(&out.stdout);
+                            let v = stdout.split_whitespace().last()?.to_string();
+                            Some(v)
+                        });
+                        let result = update_check::check(dock_ver, cli_ver.as_deref());
+                        if result.updates.is_empty() {
+                            let _ = ah.emit("update:none", ());
+                        } else {
+                            let _ = ah.emit("update:available", &result);
+                        }
+                    });
+                } else {
+                    menu::handle_event(&app_handle, &event);
+                }
             });
+
+            // Background update check (once per day)
+            update_check::spawn_startup_check(app.handle());
 
             Ok(())
         })

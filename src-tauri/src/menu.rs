@@ -34,12 +34,20 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
                 .build(),
         ),
     )?;
+    let check_updates = MenuItem::with_id(
+        app,
+        "check_updates",
+        "Check for Updates...",
+        true,
+        None::<&str>,
+    )?;
     let app_menu = Submenu::with_items(
         app,
         "reeln dock",
         true,
         &[
             &about,
+            &check_updates,
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::hide(app, None)?,
             &PredefinedMenuItem::hide_others(app, None)?,
