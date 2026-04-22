@@ -15,8 +15,6 @@ jobs:
   checks:
     name: Quality Gates
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/streamndad/tauri-ci:latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,6 +37,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: reeln-dock/src-tauri
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            libavcodec-dev libavformat-dev libavfilter-dev libavdevice-dev \
+            libavutil-dev libswscale-dev libswresample-dev pkg-config
 
       - name: Frontend checks
         working-directory: reeln-dock
