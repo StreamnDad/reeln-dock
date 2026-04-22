@@ -1,3 +1,4 @@
+use tauri::image::Image;
 use tauri::menu::{AboutMetadataBuilder, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Wry};
 
@@ -6,6 +7,9 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
     let menu = Menu::new(app)?;
 
     // ── App menu (macOS) ─────────────────────────────────────
+    let icon = Image::from_bytes(include_bytes!("../icons/128x128.png"))
+        .map(|i| i.to_owned())
+        .ok();
     let about = PredefinedMenuItem::about(
         app,
         Some("About reeln dock"),
@@ -13,9 +17,20 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
             AboutMetadataBuilder::new()
                 .name(Some("reeln dock"))
                 .version(Some(env!("CARGO_PKG_VERSION")))
+                .authors(Some(vec!["Streamn Dad".into()]))
+                .comments(Some(
+                    "Desktop companion for reeln — visual render profiles, \
+                     clip review, and game management for youth sports livestreamers.",
+                ))
+                .copyright(Some("© 2026 Streamn Dad"))
+                .license(Some("AGPL-3.0-only"))
                 .website(Some("https://streamn.dad"))
                 .website_label(Some("streamn.dad"))
-                .license(Some("AGPL-3.0-only"))
+                .credits(Some(
+                    "Built with Tauri, Svelte, and reeln-core.\n\
+                     Powered by FFmpeg and the reeln plugin ecosystem.",
+                ))
+                .icon(icon)
                 .build(),
         ),
     )?;
