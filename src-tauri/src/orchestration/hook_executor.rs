@@ -120,7 +120,6 @@ pub fn execute_hook(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     // -----------------------------------------------------------------------
     // HookExecutionResult serde
@@ -215,9 +214,7 @@ mod tests {
 
     fn make_script(dir: &std::path::Path, stdout_text: &str) -> std::path::PathBuf {
         let script = dir.join("fake_reeln.sh");
-        let mut f = std::fs::File::create(&script).unwrap();
-        writeln!(f, "#!/bin/sh").unwrap();
-        writeln!(f, "echo '{}'", stdout_text).unwrap();
+        std::fs::write(&script, format!("#!/bin/sh\necho '{}'\n", stdout_text)).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -228,9 +225,7 @@ mod tests {
 
     fn make_failing_script(dir: &std::path::Path) -> std::path::PathBuf {
         let script = dir.join("fail_reeln.sh");
-        let mut f = std::fs::File::create(&script).unwrap();
-        writeln!(f, "#!/bin/sh").unwrap();
-        writeln!(f, "exit 1").unwrap();
+        std::fs::write(&script, "#!/bin/sh\nexit 1\n").unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -396,17 +391,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("stderr_reeln.sh");
         let json_out = r#"{"success":true,"hook":"on_game_init","shared":{},"logs":["from_stdout"],"errors":[]}"#;
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\necho '{}'\necho 'warning: config deprecated' >&2\necho 'notice: upgrade available' >&2\n",
+                json_out
+            ),
+        )
+        .unwrap();
+        #[cfg(unix)]
         {
-            let mut f = std::fs::File::create(&script).unwrap();
-            writeln!(f, "#!/bin/sh").unwrap();
-            writeln!(f, "echo '{}'", json_out).unwrap();
-            writeln!(f, "echo 'warning: config deprecated' >&2").unwrap();
-            writeln!(f, "echo 'notice: upgrade available' >&2").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
         let result = execute_hook(

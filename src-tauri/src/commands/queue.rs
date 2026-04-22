@@ -526,7 +526,6 @@ pub async fn queue_remove(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     // -----------------------------------------------------------------------
     // read_queue_file
@@ -778,13 +777,14 @@ mod tests {
         args_file: &std::path::Path,
     ) -> std::path::PathBuf {
         let script = dir.join("fake_reeln.sh");
-        {
-            let mut f = std::fs::File::create(&script).unwrap();
-            writeln!(f, "#!/bin/sh").unwrap();
-            writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
-            f.flush().unwrap();
-            f.sync_all().unwrap();
-        }
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"{}\"\n",
+                args_file.display()
+            ),
+        )
+        .unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

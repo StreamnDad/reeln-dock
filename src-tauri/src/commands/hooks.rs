@@ -464,7 +464,6 @@ pub async fn execute_plugin_hook(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     const TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -537,14 +536,14 @@ mod tests {
         args_file: &std::path::Path,
     ) -> std::path::PathBuf {
         let script = dir.join("fake_reeln.sh");
-        {
-            let mut f = std::fs::File::create(&script).unwrap();
-            writeln!(f, "#!/bin/sh").unwrap();
-            writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
-            writeln!(f, "echo 'installed successfully'").unwrap();
-            f.flush().unwrap();
-            f.sync_all().unwrap();
-        }
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"{}\"\necho 'installed successfully'\n",
+                args_file.display()
+            ),
+        )
+        .unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -760,14 +759,14 @@ mod tests {
 
         // Create script that dumps args AND outputs valid JSON
         let script = dir.path().join("fake_reeln.sh");
-        {
-            let mut f = std::fs::File::create(&script).unwrap();
-            writeln!(f, "#!/bin/sh").unwrap();
-            writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
-            writeln!(f, "echo '{{\"plugins\": []}}'").unwrap();
-            f.flush().unwrap();
-            f.sync_all().unwrap();
-        }
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"{}\"\necho '{{\"plugins\": []}}'\n",
+                args_file.display()
+            ),
+        )
+        .unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -799,14 +798,14 @@ mod tests {
         let args_file = dir.path().join("args.txt");
 
         let script = dir.path().join("fake_reeln.sh");
-        {
-            let mut f = std::fs::File::create(&script).unwrap();
-            writeln!(f, "#!/bin/sh").unwrap();
-            writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
-            writeln!(f, "echo '{{\"plugins\": []}}'").unwrap();
-            f.flush().unwrap();
-            f.sync_all().unwrap();
-        }
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"{}\"\necho '{{\"plugins\": []}}'\n",
+                args_file.display()
+            ),
+        )
+        .unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -838,14 +837,14 @@ mod tests {
         let args_file = dir.path().join("args.txt");
 
         let script = dir.path().join("fake_reeln.sh");
-        {
-            let mut f = std::fs::File::create(&script).unwrap();
-            writeln!(f, "#!/bin/sh").unwrap();
-            writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
-            writeln!(f, "echo '{{\"plugins\": []}}'").unwrap();
-            f.flush().unwrap();
-            f.sync_all().unwrap();
-        }
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"{}\"\necho '{{\"plugins\": []}}'\n",
+                args_file.display()
+            ),
+        )
+        .unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -877,14 +876,14 @@ mod tests {
         let args_file = dir.path().join("args.txt");
 
         let script = dir.path().join("fake_reeln.sh");
-        {
-            let mut f = std::fs::File::create(&script).unwrap();
-            writeln!(f, "#!/bin/sh").unwrap();
-            writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
-            writeln!(f, "echo '{{\"plugins\": []}}'").unwrap();
-            f.flush().unwrap();
-            f.sync_all().unwrap();
-        }
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"{}\"\necho '{{\"plugins\": []}}'\n",
+                args_file.display()
+            ),
+        )
+        .unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -924,18 +923,11 @@ mod tests {
     fn test_auth_nonzero_exit_still_parses_json() {
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("fail_auth.sh");
-        {
-            let mut f = std::fs::File::create(&script).unwrap();
-            writeln!(f, "#!/bin/sh").unwrap();
-            writeln!(
-                f,
-                r#"echo '{{"plugins": [{{"name": "google", "results": [{{"service": "YouTube", "status": "fail", "message": "Bad token"}}]}}]}}'"#
-            )
-            .unwrap();
-            writeln!(f, "exit 1").unwrap();
-            f.flush().unwrap();
-            f.sync_all().unwrap();
-        }
+        std::fs::write(
+            &script,
+            "#!/bin/sh\necho '{\"plugins\": [{\"name\": \"google\", \"results\": [{\"service\": \"YouTube\", \"status\": \"fail\", \"message\": \"Bad token\"}]}]}'\nexit 1\n",
+        )
+        .unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -959,11 +951,7 @@ mod tests {
     fn test_auth_timeout_kills_process() {
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("slow_auth.sh");
-        {
-            let mut f = std::fs::File::create(&script).unwrap();
-            writeln!(f, "#!/bin/sh").unwrap();
-            writeln!(f, "sleep 30").unwrap(); // much longer than timeout
-        }
+        std::fs::write(&script, "#!/bin/sh\nsleep 30\n").unwrap(); // much longer than timeout
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -992,11 +980,7 @@ mod tests {
     fn test_auth_cancel_kills_process() {
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("slow_auth.sh");
-        {
-            let mut f = std::fs::File::create(&script).unwrap();
-            writeln!(f, "#!/bin/sh").unwrap();
-            writeln!(f, "sleep 30").unwrap();
-        }
+        std::fs::write(&script, "#!/bin/sh\nsleep 30\n").unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -1032,13 +1016,7 @@ mod tests {
     fn test_auth_pid_holder_tracks_pid() {
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("fast_auth.sh");
-        {
-            let mut f = std::fs::File::create(&script).unwrap();
-            writeln!(f, "#!/bin/sh").unwrap();
-            writeln!(f, "echo '{{\"plugins\": []}}'").unwrap();
-            f.flush().unwrap();
-            f.sync_all().unwrap();
-        }
+        std::fs::write(&script, "#!/bin/sh\necho '{\"plugins\": []}'\n").unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -1063,13 +1041,7 @@ mod tests {
     fn test_auth_invalid_json_returns_error() {
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("bad_json.sh");
-        {
-            let mut f = std::fs::File::create(&script).unwrap();
-            writeln!(f, "#!/bin/sh").unwrap();
-            writeln!(f, "echo 'not json'").unwrap();
-            f.flush().unwrap();
-            f.sync_all().unwrap();
-        }
+        std::fs::write(&script, "#!/bin/sh\necho 'not json'\n").unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -1092,12 +1064,11 @@ mod tests {
     fn test_install_plugin_failure_returns_stderr() {
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("fail_install.sh");
-        {
-            let mut f = std::fs::File::create(&script).unwrap();
-            writeln!(f, "#!/bin/sh").unwrap();
-            writeln!(f, "echo 'error: plugin not found' >&2").unwrap();
-            writeln!(f, "exit 1").unwrap();
-        }
+        std::fs::write(
+            &script,
+            "#!/bin/sh\necho 'error: plugin not found' >&2\nexit 1\n",
+        )
+        .unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
