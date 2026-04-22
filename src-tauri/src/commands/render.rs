@@ -660,7 +660,7 @@ pub fn suggest_preview_clip(state: State<'_, AppState>) -> Result<Option<String>
         })
         .collect();
 
-    game_dirs.sort_by(|a, b| b.1.cmp(&a.1));
+    game_dirs.sort_by_key(|b| std::cmp::Reverse(b.1));
 
     // Find the first game with an event that has a clip
     for (game_path, _) in game_dirs.iter().take(10) {
