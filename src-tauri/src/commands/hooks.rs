@@ -776,7 +776,7 @@ mod tests {
             TEST_TIMEOUT,
             None,
         );
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "auth command failed: {:?}", result.err());
 
         let args: Vec<String> = std::fs::read_to_string(&args_file)
             .unwrap()
@@ -813,7 +813,7 @@ mod tests {
             TEST_TIMEOUT,
             None,
         );
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "auth command failed: {:?}", result.err());
 
         let args: Vec<String> = std::fs::read_to_string(&args_file)
             .unwrap()
@@ -850,7 +850,7 @@ mod tests {
             TEST_TIMEOUT,
             None,
         );
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "auth refresh failed: {:?}", result.err());
 
         let args: Vec<String> = std::fs::read_to_string(&args_file)
             .unwrap()
@@ -887,7 +887,7 @@ mod tests {
             TEST_TIMEOUT,
             None,
         );
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "auth command failed: {:?}", result.err());
 
         let args: Vec<String> = std::fs::read_to_string(&args_file)
             .unwrap()
@@ -1038,7 +1038,7 @@ mod tests {
             TEST_TIMEOUT,
             Some(&pid_holder),
         );
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "auth command failed: {:?}", result.err());
         // After completion, PID should be cleared
         assert!(pid_holder.lock().unwrap().is_none());
     }
