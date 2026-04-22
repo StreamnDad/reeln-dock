@@ -56,21 +56,8 @@ fn main() {
                     let ah = app_ref.clone();
                     std::thread::spawn(move || {
                         let dock_ver = env!("CARGO_PKG_VERSION");
-                        let cli_ver = ah.try_state::<AppState>().and_then(|s| {
-                            let settings = s.dock_settings.lock().ok()?;
-                            let cli = orchestration::hook_executor::detect_reeln_cli(
-                                settings.reeln_cli_path.as_deref(),
-                            )
-                            .ok()?;
-                            let out = std::process::Command::new(&cli)
-                                .arg("--version")
-                                .output()
-                                .ok()?;
-                            let stdout = String::from_utf8_lossy(&out.stdout);
-                            let v = stdout.split_whitespace().last()?.to_string();
-                            Some(v)
-                        });
-                        let result = update_check::check(dock_ver, cli_ver.as_deref());
+                        let (cli_ver, plugins) = update_check::detect_cli_and_plugins(&ah);
+                        let result = update_check::check(dock_ver, cli_ver.as_deref(), &plugins);
                         if result.updates.is_empty() {
                             let _ = ah.emit("update:none", ());
                         } else {

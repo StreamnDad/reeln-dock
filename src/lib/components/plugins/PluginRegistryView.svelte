@@ -12,6 +12,8 @@
   import { help } from "$lib/help";
   import HelpLink from "$lib/components/HelpLink.svelte";
   import { log } from "$lib/stores/log.svelte";
+  import { getPluginUpdate } from "$lib/stores/updates.svelte";
+  import { open } from "@tauri-apps/plugin-shell";
 
   let registryPlugins = $derived(getRegistry());
   let regLoading = $derived(isRegistryLoading());
@@ -124,6 +126,14 @@
                   {#if isCliAvailable()}
                     {#if isPluginInstalled(plugin.name)}
                       <span class="px-1.5 py-0.5 rounded-full bg-green-900/60 text-green-300 text-[10px]">installed</span>
+                      {@const pluginUpdate = getPluginUpdate(plugin.name)}
+                      {#if pluginUpdate}
+                        <button
+                          class="px-1.5 py-0.5 rounded-full bg-amber-900/60 text-amber-300 text-[10px] hover:bg-amber-800/60 transition-colors"
+                          onclick={(e) => { e.stopPropagation(); open(pluginUpdate.release_url); }}
+                          title="{pluginUpdate.current} → {pluginUpdate.latest}"
+                        >update available</button>
+                      {/if}
                     {:else}
                       <span class="px-1.5 py-0.5 rounded-full bg-bg text-text-muted text-[10px]">not installed</span>
                     {/if}
@@ -191,10 +201,18 @@
                 </div>
               </div>
 
-              <!-- Install action -->
+              <!-- Install / Update action -->
               <div class="mt-4 pt-3 border-t border-border/50 flex items-center gap-3">
                 {#if isCliAvailable() && isPluginInstalled(plugin.name)}
-                  <span class="px-3 py-1.5 text-xs font-medium text-green-300 border border-green-800 rounded-lg">Installed</span>
+                  {@const pUpdate = getPluginUpdate(plugin.name)}
+                  {#if pUpdate}
+                    <button
+                      class="px-3 py-1.5 text-xs font-medium bg-amber-700 hover:bg-amber-600 text-text rounded-lg transition-colors"
+                      onclick={() => open(pUpdate.release_url)}
+                    >Update {pUpdate.current} &rarr; {pUpdate.latest}</button>
+                  {:else}
+                    <span class="px-3 py-1.5 text-xs font-medium text-green-300 border border-green-800 rounded-lg">Installed</span>
+                  {/if}
                 {:else if isCliAvailable()}
                   <button
                     class="px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-light text-text rounded-lg transition-colors disabled:opacity-50"

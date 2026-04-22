@@ -55,8 +55,18 @@ fn parse_version(s: &str) -> Option<semver::Version> {
     semver::Version::parse(s.trim_start_matches('v')).ok()
 }
 
+/// An installed plugin with its current version.
+pub struct InstalledPlugin {
+    pub name: String,
+    pub version: String,
+}
+
 /// Check for updates and return any available.
-pub fn check(dock_version: &str, cli_version: Option<&str>) -> UpdateCheckResult {
+pub fn check(
+    dock_version: &str,
+    cli_version: Option<&str>,
+    plugins: &[InstalledPlugin],
+) -> UpdateCheckResult {
     let mut updates = Vec::new();
 
     // Check reeln-dock
@@ -97,6 +107,27 @@ pub fn check(dock_version: &str, cli_version: Option<&str>) -> UpdateCheckResult
         }
     }
 
+    // Check installed plugins (repos follow StreamnDad/reeln-plugin-{name})
+    for plugin in plugins {
+        let repo = format!("StreamnDad/reeln-plugin-{}", plugin.name);
+        if let Ok((latest_tag, body, url, published)) = fetch_latest_release(&repo) {
+            let current = parse_version(&plugin.version);
+            let latest = parse_version(&latest_tag);
+            if let (Some(c), Some(l)) = (current, latest)
+                && l > c
+            {
+                updates.push(UpdateInfo {
+                    name: format!("reeln-plugin-{}", plugin.name),
+                    current: plugin.version.clone(),
+                    latest: latest_tag,
+                    release_notes: body,
+                    release_url: url,
+                    published_at: published,
+                });
+            }
+        }
+    }
+
     UpdateCheckResult { updates }
 }
 
@@ -122,31 +153,10 @@ pub fn spawn_startup_check(app: &AppHandle<Wry>) {
             }
         }
 
-        // Get CLI version if available
-        let cli_version = app_handle
-            .try_state::<crate::state::AppState>()
-            .and_then(|state| {
-                let settings = state.dock_settings.lock().ok()?;
-                let cli_path = crate::orchestration::hook_executor::detect_reeln_cli(
-                    settings.reeln_cli_path.as_deref(),
-                )
-                .ok()?;
-                let output = std::process::Command::new(&cli_path)
-                    .arg("--version")
-                    .output()
-                    .ok()?;
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                // Parse "reeln X.Y.Z" or just "X.Y.Z"
-                let ver = stdout
-                    .split_whitespace()
-                    .last()?
-                    .trim_start_matches('v')
-                    .to_string();
-                semver::Version::parse(&ver).ok()?;
-                Some(ver)
-            });
+        // Get CLI version and installed plugins
+        let (cli_version, plugins) = detect_cli_and_plugins(&app_handle);
 
-        let result = check(&dock_version, cli_version.as_deref());
+        let result = check(&dock_version, cli_version.as_deref(), &plugins);
 
         // Update last check timestamp
         if let Some(state) = app_handle.try_state::<crate::state::AppState>()
@@ -160,4 +170,61 @@ pub fn spawn_startup_check(app: &AppHandle<Wry>) {
             let _ = app_handle.emit("update:available", &result);
         }
     });
+}
+
+/// Detect CLI version and installed plugins from `reeln --version` output.
+pub fn detect_cli_and_plugins(app: &AppHandle<Wry>) -> (Option<String>, Vec<InstalledPlugin>) {
+    let state = match app.try_state::<crate::state::AppState>() {
+        Some(s) => s,
+        None => return (None, Vec::new()),
+    };
+    let settings = match state.dock_settings.lock() {
+        Ok(s) => s,
+        Err(_) => return (None, Vec::new()),
+    };
+    let cli_path = match crate::orchestration::hook_executor::detect_reeln_cli(
+        settings.reeln_cli_path.as_deref(),
+    ) {
+        Ok(p) => p,
+        Err(_) => return (None, Vec::new()),
+    };
+    drop(settings);
+
+    let output = match std::process::Command::new(&cli_path)
+        .arg("--version")
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return (None, Vec::new()),
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut cli_version = None;
+    let mut plugins = Vec::new();
+    let mut in_plugins = false;
+
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("reeln ") && !trimmed.contains("native") {
+            let ver = trimmed
+                .strip_prefix("reeln ")
+                .unwrap_or(trimmed)
+                .trim_start_matches('v');
+            if semver::Version::parse(ver).is_ok() {
+                cli_version = Some(ver.to_string());
+            }
+        } else if trimmed == "plugins:" {
+            in_plugins = true;
+        } else if in_plugins && !trimmed.is_empty() {
+            let parts: Vec<&str> = trimmed.splitn(2, ' ').collect();
+            if parts.len() == 2 {
+                plugins.push(InstalledPlugin {
+                    name: parts[0].to_string(),
+                    version: parts[1].to_string(),
+                });
+            }
+        }
+    }
+
+    (cli_version, plugins)
 }

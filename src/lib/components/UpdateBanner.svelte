@@ -15,6 +15,8 @@
     updates: UpdateInfo[];
   }
 
+  import { setAvailableUpdates } from "$lib/stores/updates.svelte";
+
   let updates = $state<UpdateInfo[]>([]);
   let dismissed = $state(false);
   let noUpdates = $state(false);
@@ -23,6 +25,7 @@
     listen<UpdateCheckResult>("update:available", (event) => {
       updates = event.payload.updates;
       dismissed = false;
+      setAvailableUpdates(event.payload.updates);
     });
     listen("update:none", () => {
       noUpdates = true;
