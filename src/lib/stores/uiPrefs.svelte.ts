@@ -54,3 +54,9 @@ export function setLivestreamsExpanded(v: boolean) { livestreamsExpanded_ = v; }
 
 export function getStateInfoExpanded(): boolean { return stateInfoExpanded_; }
 export function setStateInfoExpanded(v: boolean) { stateInfoExpanded_ = v; }
+
+// Help tooltips
+let showHelpTips_ = $state(true);
+
+export function getShowHelpTips(): boolean { return showHelpTips_; }
+export function setShowHelpTips(v: boolean) { showHelpTips_ = v; }

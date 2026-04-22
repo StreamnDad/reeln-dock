@@ -8,6 +8,7 @@
   import type { DockSettings } from "$lib/types/dock";
   import type { EventTypeEntry } from "$lib/types/config";
   import LogViewer from "./LogViewer.svelte";
+  import { getShowHelpTips, setShowHelpTips } from "$lib/stores/uiPrefs.svelte";
   import TeamsSettingsTab from "./TeamsSettingsTab.svelte";
   import TournamentsSettingsTab from "./TournamentsSettingsTab.svelte";
   import RenderingSettingsTab from "./RenderingSettingsTab.svelte";
@@ -314,6 +315,19 @@
           <div>
             <span class="text-sm text-text">Show team logos</span>
             <p class="text-xs text-text-muted">Display team logos on game tiles in sidebar and tournament views.</p>
+          </div>
+        </label>
+        <label class="flex items-center gap-3 cursor-pointer mt-3" for="show-help-tips">
+          <input
+            id="show-help-tips"
+            type="checkbox"
+            checked={getShowHelpTips()}
+            onchange={(e) => setShowHelpTips((e.target as HTMLInputElement).checked)}
+            class="rounded"
+          />
+          <div>
+            <span class="text-sm text-text">Show help tooltips</span>
+            <p class="text-xs text-text-muted">Display "?" help icons next to settings with links to documentation.</p>
           </div>
         </label>
       </div>
