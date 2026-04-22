@@ -782,7 +782,8 @@ mod tests {
             let mut f = std::fs::File::create(&script).unwrap();
             writeln!(f, "#!/bin/sh").unwrap();
             writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
-            // f is dropped here — file handle closed before chmod/exec
+            f.flush().unwrap();
+            f.sync_all().unwrap();
         }
         #[cfg(unix)]
         {

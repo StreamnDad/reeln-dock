@@ -542,7 +542,8 @@ mod tests {
             writeln!(f, "#!/bin/sh").unwrap();
             writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
             writeln!(f, "echo 'installed successfully'").unwrap();
-            // f is dropped here — file handle closed before chmod/exec
+            f.flush().unwrap();
+            f.sync_all().unwrap();
         }
         #[cfg(unix)]
         {
@@ -764,6 +765,8 @@ mod tests {
             writeln!(f, "#!/bin/sh").unwrap();
             writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
             writeln!(f, "echo '{{\"plugins\": []}}'").unwrap();
+            f.flush().unwrap();
+            f.sync_all().unwrap();
         }
         #[cfg(unix)]
         {
@@ -801,6 +804,8 @@ mod tests {
             writeln!(f, "#!/bin/sh").unwrap();
             writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
             writeln!(f, "echo '{{\"plugins\": []}}'").unwrap();
+            f.flush().unwrap();
+            f.sync_all().unwrap();
         }
         #[cfg(unix)]
         {
@@ -838,6 +843,8 @@ mod tests {
             writeln!(f, "#!/bin/sh").unwrap();
             writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
             writeln!(f, "echo '{{\"plugins\": []}}'").unwrap();
+            f.flush().unwrap();
+            f.sync_all().unwrap();
         }
         #[cfg(unix)]
         {
@@ -875,6 +882,8 @@ mod tests {
             writeln!(f, "#!/bin/sh").unwrap();
             writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
             writeln!(f, "echo '{{\"plugins\": []}}'").unwrap();
+            f.flush().unwrap();
+            f.sync_all().unwrap();
         }
         #[cfg(unix)]
         {
@@ -924,6 +933,8 @@ mod tests {
             )
             .unwrap();
             writeln!(f, "exit 1").unwrap();
+            f.flush().unwrap();
+            f.sync_all().unwrap();
         }
         #[cfg(unix)]
         {
@@ -1025,6 +1036,8 @@ mod tests {
             let mut f = std::fs::File::create(&script).unwrap();
             writeln!(f, "#!/bin/sh").unwrap();
             writeln!(f, "echo '{{\"plugins\": []}}'").unwrap();
+            f.flush().unwrap();
+            f.sync_all().unwrap();
         }
         #[cfg(unix)]
         {
@@ -1054,6 +1067,8 @@ mod tests {
             let mut f = std::fs::File::create(&script).unwrap();
             writeln!(f, "#!/bin/sh").unwrap();
             writeln!(f, "echo 'not json'").unwrap();
+            f.flush().unwrap();
+            f.sync_all().unwrap();
         }
         #[cfg(unix)]
         {
