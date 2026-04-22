@@ -764,11 +764,11 @@ mod tests {
             writeln!(f, "#!/bin/sh").unwrap();
             writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
             writeln!(f, "echo '{{\"plugins\": []}}'").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
         let result = run_auth_command(
@@ -801,11 +801,11 @@ mod tests {
             writeln!(f, "#!/bin/sh").unwrap();
             writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
             writeln!(f, "echo '{{\"plugins\": []}}'").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
         let result = run_auth_command(
@@ -838,11 +838,11 @@ mod tests {
             writeln!(f, "#!/bin/sh").unwrap();
             writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
             writeln!(f, "echo '{{\"plugins\": []}}'").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
         let result = run_auth_command(
@@ -875,11 +875,11 @@ mod tests {
             writeln!(f, "#!/bin/sh").unwrap();
             writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
             writeln!(f, "echo '{{\"plugins\": []}}'").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
         let result = run_auth_command(
@@ -924,11 +924,11 @@ mod tests {
             )
             .unwrap();
             writeln!(f, "exit 1").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
         let result = run_auth_command(
@@ -952,11 +952,11 @@ mod tests {
             let mut f = std::fs::File::create(&script).unwrap();
             writeln!(f, "#!/bin/sh").unwrap();
             writeln!(f, "sleep 30").unwrap(); // much longer than timeout
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
         let short_timeout = std::time::Duration::from_millis(300);
@@ -985,11 +985,11 @@ mod tests {
             let mut f = std::fs::File::create(&script).unwrap();
             writeln!(f, "#!/bin/sh").unwrap();
             writeln!(f, "sleep 30").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
         let pid_holder = std::sync::Mutex::new(None::<u32>);
@@ -1025,11 +1025,11 @@ mod tests {
             let mut f = std::fs::File::create(&script).unwrap();
             writeln!(f, "#!/bin/sh").unwrap();
             writeln!(f, "echo '{{\"plugins\": []}}'").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
         let pid_holder = std::sync::Mutex::new(None::<u32>);
@@ -1054,11 +1054,11 @@ mod tests {
             let mut f = std::fs::File::create(&script).unwrap();
             writeln!(f, "#!/bin/sh").unwrap();
             writeln!(f, "echo 'not json'").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
         let result = run_auth_command(
@@ -1082,11 +1082,11 @@ mod tests {
             writeln!(f, "#!/bin/sh").unwrap();
             writeln!(f, "echo 'error: plugin not found' >&2").unwrap();
             writeln!(f, "exit 1").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
         let output = std::process::Command::new(script.to_str().unwrap())
