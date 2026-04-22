@@ -26,7 +26,8 @@
   }
 </script>
 
-<!-- Inline help icon with tooltip — hover zone covers both icon and popup -->
+<!-- Inline help icon with tooltip — hidden when help tips are disabled -->
+{#if getShowHelpTips()}
 <span
   class="relative inline-flex items-center ml-1"
   onmouseenter={show}
@@ -54,3 +55,4 @@
     </div>
   {/if}
 </span>
+{/if}
