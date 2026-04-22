@@ -1,6 +1,6 @@
 /** Help text and documentation links for dock settings. */
 
-const DOCS_BASE = "https://reeln.readthedocs.io/en/latest";
+const DOCS_BASE = "https://reeln-cli.readthedocs.io/en/latest";
 
 export interface HelpEntry {
   text: string;
