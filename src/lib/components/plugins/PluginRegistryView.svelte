@@ -9,6 +9,8 @@
   } from "$lib/stores/plugins.svelte";
   import { isPluginInstalled, isCliAvailable, refreshCliStatus } from "$lib/stores/cli.svelte";
   import { installPluginViaCli } from "$lib/ipc/plugins";
+  import { help } from "$lib/help";
+  import HelpLink from "$lib/components/HelpLink.svelte";
   import { log } from "$lib/stores/log.svelte";
 
   let registryPlugins = $derived(getRegistry());
@@ -68,7 +70,7 @@
 <div>
   <div class="flex items-center justify-between mb-6">
     <div>
-      <h2 class="text-lg font-bold">Plugin Registry</h2>
+      <h2 class="text-lg font-bold">Plugin Registry <HelpLink text={help["plugins.registry"].text} url={help["plugins.registry"].url} /></h2>
       <p class="text-xs text-text-muted mt-0.5">
         Available plugins for the reeln ecosystem
         {#if version}

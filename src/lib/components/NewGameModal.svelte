@@ -10,7 +10,9 @@
   import type { GameSummary } from "$lib/types/game";
   import { log } from "$lib/stores/log.svelte";
   import { lookupTeam } from "$lib/stores/teams.svelte";
+  import { help } from "$lib/help";
   import TeamLogo from "$lib/components/TeamLogo.svelte";
+  import HelpLink from "$lib/components/HelpLink.svelte";
 
   interface Props {
     onclose: () => void;
@@ -601,7 +603,7 @@
   <div class="bg-surface rounded-xl border border-border w-[36rem] max-h-[85vh] flex flex-col">
     <!-- Header with step indicator -->
     <div class="px-6 pt-5 pb-3 border-b border-border">
-      <h2 class="text-lg font-bold mb-3">New Game</h2>
+      <h2 class="text-lg font-bold mb-3">New Game <HelpLink text={help["game.create"].text} url={help["game.create"].url} /></h2>
       {#if step !== "hooks"}
         <div class="flex gap-1">
           {#each stepOrder as _, i}
@@ -697,7 +699,7 @@
 
           <div>
             <label class="block text-xs font-semibold uppercase tracking-wider text-text-muted mb-1.5" for="ng-sport">
-              Sport
+              Sport <HelpLink text={help["game.sport"].text} url={help["game.sport"].url} />
             </label>
             <select
               id="ng-sport"

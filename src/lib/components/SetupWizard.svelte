@@ -1,6 +1,9 @@
 <script lang="ts">
-  import { open } from "@tauri-apps/plugin-dialog";
+  import { open as openDialog } from "@tauri-apps/plugin-dialog";
+  import { open as openUrl } from "@tauri-apps/plugin-shell";
   import { loadConfigFromPath, saveDockSettings, getConfigPath } from "$lib/ipc/config";
+  import { help } from "$lib/help";
+  import HelpLink from "$lib/components/HelpLink.svelte";
   import type { AppConfig } from "$lib/types/config";
   import type { DockSettings } from "$lib/types/dock";
 
@@ -27,7 +30,7 @@
 
   async function browseForConfig() {
     error = "";
-    const result = await open({
+    const result = await openDialog({
       title: "Locate reeln config",
       filters: [{ name: "JSON", extensions: ["json"] }],
       directory: false,
@@ -39,7 +42,7 @@
 
   async function browseForDirectory() {
     error = "";
-    const result = await open({
+    const result = await openDialog({
       title: "Select directory containing reeln config",
       directory: true,
     });
@@ -93,11 +96,17 @@
         >
           Locate config file
         </button>
+        {#if help["docs.quickstart"]?.url}
+          <button
+            class="text-sm text-secondary hover:underline transition-colors"
+            onclick={() => openUrl(help["docs.quickstart"].url!)}
+          >Read the Quick Start Guide</button>
+        {/if}
       </div>
 
     {:else if step === "locate"}
       <div class="flex flex-col gap-4">
-        <h2 class="text-xl font-bold">Locate your config</h2>
+        <h2 class="text-xl font-bold">Locate your config <HelpLink text={help["setup.config_file"].text} url={help["setup.config_file"].url} /></h2>
         <p class="text-text-muted text-sm">
           Browse for your <code class="text-secondary">reeln.json</code> file, or select a directory that contains one.
         </p>
@@ -168,6 +177,12 @@
         >
           Pick a different file
         </button>
+        {#if help["setup.config_file"]?.url}
+          <button
+            class="text-xs text-secondary hover:underline transition-colors mt-1"
+            onclick={() => openUrl(help["setup.config_file"].url!)}
+          >Learn more about configuration</button>
+        {/if}
       </div>
     {/if}
 

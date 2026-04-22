@@ -22,6 +22,8 @@
   } from "$lib/stores/plugins.svelte";
   import { getEnforceHooks, setEnforceHooks } from "$lib/ipc/plugins";
   import { isPluginInstalled, isCliAvailable } from "$lib/stores/cli.svelte";
+  import { help } from "$lib/help";
+  import HelpLink from "$lib/components/HelpLink.svelte";
   import PluginCard from "./PluginCard.svelte";
 
   let profiles = $derived(getProfiles());
@@ -147,7 +149,7 @@
 <div>
   <!-- Header with version -->
   <div class="flex items-center justify-between mb-4">
-    <h2 class="text-lg font-bold">Plugins</h2>
+    <h2 class="text-lg font-bold">Plugins <HelpLink text={help["plugins.manage"].text} url={help["plugins.manage"].url} /></h2>
     {#if version}
       <div class="flex items-center gap-3 text-xs text-text-muted">
         <span>dock v{version.app_version}</span>
@@ -161,7 +163,7 @@
   <!-- Config Profile Selector -->
   <div class="mb-4">
     <label class="block text-xs font-semibold uppercase tracking-wider text-text-muted mb-1.5" for="profile-select">
-      Config Profile
+      Config Profile <HelpLink text={help["plugins.auth"].text} url={help["plugins.auth"].url} />
     </label>
     <div class="flex flex-wrap items-center gap-2">
       {#each profiles as profile (profile.path)}
@@ -229,7 +231,7 @@
   {#if selectedPath}
     <div class="mb-4 flex items-center justify-between px-3 py-2.5 bg-bg rounded-lg border border-border">
       <div>
-        <span class="text-sm font-medium">Enforce Hook Registry</span>
+        <span class="text-sm font-medium">Enforce Hook Registry <HelpLink text={help["plugins.enforce_hooks"].text} url={help["plugins.enforce_hooks"].url} /></span>
         <p class="text-xs text-text-muted mt-0.5">
           When enabled, plugins can only register hooks declared in the registry.
           Disable to allow all hooks.

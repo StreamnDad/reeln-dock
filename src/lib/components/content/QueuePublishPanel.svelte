@@ -8,6 +8,8 @@
     publishCliItem,
   } from "$lib/stores/renderQueue.svelte";
   import { listConfigProfiles, listPluginsForProfile, fetchPluginRegistry } from "$lib/ipc/plugins";
+  import { help } from "$lib/help";
+  import HelpLink from "$lib/components/HelpLink.svelte";
 
   interface Props {
     item: CliQueueItem;
@@ -279,7 +281,7 @@
   <!-- Publish targets -->
   <div>
     <div class="flex items-center justify-between mb-2">
-      <label class="text-xs text-text-muted">Publish Targets</label>
+      <label class="text-xs text-text-muted">Publish Targets <HelpLink text={help["queue.publish"].text} url={help["queue.publish"].url} /></label>
       {#if item.publish_targets.some((pt) => pt.status !== "published") || discoveredTargets.length > 0}
         <button
           class="px-3 py-1 text-xs bg-primary hover:bg-primary-light text-text rounded transition-colors disabled:opacity-50"

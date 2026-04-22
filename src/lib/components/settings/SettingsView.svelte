@@ -15,6 +15,8 @@
   import ProfilesSettingsTab from "./ProfilesSettingsTab.svelte";
   import { settingsTeamTarget, settingsTournamentTarget } from "$lib/stores/navigation";
   import { useStore } from "$lib/stores/bridge.svelte";
+  import { help } from "$lib/help";
+  import HelpLink from "$lib/components/HelpLink.svelte";
   import { getCliStatus, refreshCliStatus } from "$lib/stores/cli.svelte";
   import { getProxyCacheStats, clearProxyCache } from "$lib/ipc/media";
   import type { ProxyCacheStats } from "$lib/ipc/media";
@@ -279,7 +281,7 @@
   {:else if activeTab === "dock"}
     <div class="bg-surface rounded-lg border border-border p-4 space-y-4">
       <div>
-        <label class="block text-sm text-text-muted mb-1" for="config-path">Config File Path</label>
+        <label class="block text-sm text-text-muted mb-1" for="config-path">Config File Path <HelpLink text={help["config.file_locations"].text} url={help["config.file_locations"].url} /></label>
         <div class="flex gap-2">
           <input
             id="config-path"
@@ -472,6 +474,10 @@
 
   {:else if activeTab === "config" && config}
     <div class="bg-surface rounded-lg border border-border p-4 space-y-4 text-sm">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-xs font-semibold uppercase tracking-wider text-text-muted">reeln Config</span>
+        <HelpLink text={help["config.doctor"].text} url={help["config.doctor"].url} />
+      </div>
       <div class="grid grid-cols-2 gap-4">
         <div>
           <span class="text-text-muted block">Sport</span>

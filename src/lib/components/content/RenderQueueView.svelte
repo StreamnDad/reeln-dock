@@ -16,6 +16,8 @@
   } from "$lib/stores/renderQueue.svelte";
   import type { RenderStageItem, CliQueueItem } from "$lib/types/queue";
   import { editingQueueItem } from "$lib/stores/navigation";
+  import { help } from "$lib/help";
+  import HelpLink from "$lib/components/HelpLink.svelte";
   import QueuePublishPanel from "./QueuePublishPanel.svelte";
 
   type Tab = "staging" | "publish";
@@ -213,7 +215,7 @@
   {#if activeTab === "staging"}
     <div class="space-y-5">
       <div class="flex items-center justify-between">
-        <h2 class="text-lg font-bold">Pending Renders</h2>
+        <h2 class="text-lg font-bold">Pending Renders <HelpLink text={help["queue.overview"].text} url={help["queue.overview"].url} /></h2>
         <div class="flex gap-2">
           {#if stageItems.some((q) => q.status === "error")}
             <button

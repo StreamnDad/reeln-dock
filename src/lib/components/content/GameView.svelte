@@ -8,6 +8,8 @@
   import { getDockSettings } from "$lib/stores/config.svelte";
   import * as uiPrefs from "$lib/stores/uiPrefs.svelte";
   import TeamLogo from "$lib/components/TeamLogo.svelte";
+  import { help } from "$lib/help";
+  import HelpLink from "$lib/components/HelpLink.svelte";
   import RenderPlaybackModal from "./RenderPlaybackModal.svelte";
   import PrunePreviewModal from "./PrunePreviewModal.svelte";
   import DeleteGameModal from "./DeleteGameModal.svelte";
@@ -566,6 +568,7 @@
           >
             {actionLoading === "finish" ? "Finishing..." : "Finish Game"}
           </button>
+          <HelpLink text={help["game.finish"].text} url={help["game.finish"].url} />
         </div>
       </div>
     {/if}
@@ -652,6 +655,7 @@
         <span class="transition-transform text-xs" class:rotate-90={eventsExpanded}>&#9654;</span>
         Events ({filteredEvents.length}{selectedSegment !== null || selectedEventType !== null ? ` of ${gs.events.length}` : ""})
       </button>
+      <HelpLink text={help["game.events"].text} url={help["game.events"].url} />
 
       {#if eventsExpanded}
         <!-- Bulk tag bar -->
@@ -852,6 +856,7 @@
           <span class="transition-transform text-xs" class:rotate-90={rendersExpanded}>&#9654;</span>
           Renders ({gs.renders.length})
         </button>
+        <HelpLink text={help["game.highlights"].text} url={help["game.highlights"].url} />
         {#if gs.renders.length > 0}
           <button
             class="ml-auto px-2 py-0.5 text-[11px] text-text-muted hover:text-accent transition-colors disabled:opacity-50"
@@ -911,7 +916,7 @@
           >
             Prune Game Files
           </button>
-          <p class="text-[11px] text-text-muted mt-1">Remove generated artifacts to free disk space.</p>
+          <p class="text-[11px] text-text-muted mt-1">Remove generated artifacts to free disk space. <HelpLink text={help["game.prune"].text} url={help["game.prune"].url} /></p>
         </div>
       {/if}
       <div>
@@ -977,7 +982,7 @@
         <!-- Livestreams -->
         {#if livestreamEntries.length > 0 || addingLivestream}
           <div class="bg-surface rounded-lg border border-border p-3 space-y-2 text-sm">
-            <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">Livestreams</h3>
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">Livestreams <HelpLink text={help["game.livestream"].text} url={help["game.livestream"].url} /></h3>
             {#each livestreamEntries as [platform, url]}
               <div class="space-y-0.5">
                 <div class="flex items-center justify-between">

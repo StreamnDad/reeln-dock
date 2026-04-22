@@ -20,6 +20,8 @@
   import RenderPlaybackModal from "./RenderPlaybackModal.svelte";
   import DynamicPluginFields from "./DynamicPluginFields.svelte";
   import CliGate from "$lib/components/CliGate.svelte";
+  import HelpLink from "$lib/components/HelpLink.svelte";
+  import { help } from "$lib/help";
   import { getActiveFieldsForScreen } from "$lib/stores/pluginUI.svelte";
 
   interface Props {
@@ -579,6 +581,10 @@
 
   <!-- Quick-Tag Pills -->
   {#if eventTypes.length > 0}
+    <div class="flex items-center gap-1.5 mb-1">
+      <span class="text-xs text-text-muted">Event Type</span>
+      <HelpLink text={help["clip.event_tagging"].text} url={help["clip.event_tagging"].url} />
+    </div>
     <div class="flex flex-wrap gap-1.5">
       {#each eventTypes as et}
         {#if et.team_specific}
@@ -625,6 +631,10 @@
 
   <!-- Player Assignment (scorer + assists) -->
   {#if event.event_type}
+    <div class="flex items-center gap-1.5 mb-1">
+      <span class="text-xs text-text-muted">Player Assignment</span>
+      <HelpLink text={help["clip.player_lookup"].text} url={help["clip.player_lookup"].url} />
+    </div>
     <div class="space-y-1.5">
       {#each [{ id: "scorer", label: "Scorer", value: currentScorer }, { id: "assist1", label: "Assist 1", value: currentAssist1 }, { id: "assist2", label: "Assist 2", value: currentAssist2 }] as field}
         <div class="flex items-center gap-2">
@@ -658,7 +668,7 @@
   {/if}
 
   <!-- Render Options (always visible) -->
-  <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">Render Options</h3>
+  <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">Render Options <HelpLink text={help["clip.render_short"].text} url={help["clip.render_short"].url} /></h3>
     <div class="bg-surface rounded-lg border border-border p-4 space-y-3">
       {#if renderError}
         <div class="px-3 py-2 bg-red-900/30 border border-red-800 rounded-lg text-sm text-red-300">{renderError}</div>
@@ -826,6 +836,7 @@
       <label class="flex items-center gap-2 text-xs text-text-muted cursor-pointer">
         <input type="checkbox" bind:checked={debugEnabled} class="accent-secondary" />
         Debug (write artifacts + index.html)
+        <HelpLink text={help["clip.debug"].text} url={help["clip.debug"].url} />
       </label>
 
       {#if clipAlreadyInQueue}
