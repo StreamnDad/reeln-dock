@@ -537,10 +537,13 @@ mod tests {
         args_file: &std::path::Path,
     ) -> std::path::PathBuf {
         let script = dir.join("fake_reeln.sh");
-        let mut f = std::fs::File::create(&script).unwrap();
-        writeln!(f, "#!/bin/sh").unwrap();
-        writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
-        writeln!(f, "echo 'installed successfully'").unwrap();
+        {
+            let mut f = std::fs::File::create(&script).unwrap();
+            writeln!(f, "#!/bin/sh").unwrap();
+            writeln!(f, "printf '%s\\n' \"$@\" > \"{}\"", args_file.display()).unwrap();
+            writeln!(f, "echo 'installed successfully'").unwrap();
+            // f is dropped here — file handle closed before chmod/exec
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
