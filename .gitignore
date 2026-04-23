@@ -5,3 +5,4 @@ src-tauri/target/
 *.swp
 *.swo
 .tauri-dev.pid
+coverage/

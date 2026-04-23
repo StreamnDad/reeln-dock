@@ -46,6 +46,7 @@ export async function initGame(params: {
   level?: string;
   tournament?: string;
   periodLength?: number;
+  description?: string;
 }): Promise<GameSummary> {
   return invoke<GameSummary>("init_game", params);
 }
@@ -82,6 +83,56 @@ export async function pruneRenders(
   return invoke<PruneResult>("prune_renders", { gameDir });
 }
 
+export interface PruneFileEntry {
+  path: string;
+  bytes: number;
+}
+
+export interface PrunePreview {
+  files: PruneFileEntry[];
+  total_bytes: number;
+  file_count: number;
+  eligible: boolean;
+  reason: string;
+}
+
+export async function pruneGamePreview(
+  gameDir: string,
+  allFiles: boolean = false,
+  force: boolean = false,
+): Promise<PrunePreview> {
+  return invoke<PrunePreview>("prune_game_preview", { gameDir, allFiles, force: force || null });
+}
+
+export async function pruneGameExecute(
+  gameDir: string,
+  allFiles: boolean = false,
+  force: boolean = false,
+): Promise<PrunePreview> {
+  return invoke<PrunePreview>("prune_game_execute", { gameDir, allFiles, force: force || null });
+}
+
+export interface DeletePreview {
+  dir_path: string;
+  home_team: string;
+  away_team: string;
+  date: string;
+  total_bytes: number;
+  file_count: number;
+}
+
+export async function deleteGamePreview(
+  gameDir: string,
+): Promise<DeletePreview> {
+  return invoke<DeletePreview>("delete_game_preview", { gameDir });
+}
+
+export async function deleteGame(
+  gameDir: string,
+): Promise<void> {
+  return invoke<void>("delete_game", { gameDir });
+}
+
 export async function bulkUpdateEventType(
   gameDir: string,
   eventIds: string[],
@@ -106,6 +157,35 @@ export async function quickTagEvent(
     eventType,
     team: team ?? null,
   });
+}
+
+export async function updateGameInfo(
+  gameDir: string,
+  field: string,
+  value: string,
+): Promise<GameState> {
+  return invoke<GameState>("update_game_info", { gameDir, field, value });
+}
+
+export async function setGameLivestream(
+  gameDir: string,
+  platform: string,
+  url: string,
+): Promise<GameState> {
+  return invoke<GameState>("set_game_livestream", { gameDir, platform, url });
+}
+
+export async function removeGameLivestream(
+  gameDir: string,
+  platform: string,
+): Promise<GameState> {
+  return invoke<GameState>("remove_game_livestream", { gameDir, platform });
+}
+
+export async function discoverGameImage(
+  gameDir: string,
+): Promise<string | null> {
+  return invoke<string | null>("discover_game_image", { gameDir });
 }
 
 export async function detectReelnCli(): Promise<string> {

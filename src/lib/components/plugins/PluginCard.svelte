@@ -1,17 +1,23 @@
 <script lang="ts">
-  import type { PluginDetail, RegistryPlugin } from "$lib/types/plugin";
+  import type { AuthCheckResult, PluginDetail, RegistryPlugin } from "$lib/types/plugin";
   import { togglePlugin, updatePluginSettings } from "$lib/stores/plugins.svelte";
+  import { installPluginViaCli } from "$lib/ipc/plugins";
+  import { refreshCliStatus } from "$lib/stores/cli.svelte";
+  import { log } from "$lib/stores/log.svelte";
 
   interface Props {
     name: string;
-    status: "enabled" | "disabled" | "available";
+    status: "enabled" | "enabled_not_installed" | "disabled" | "available";
     detail?: PluginDetail;
     registryInfo?: RegistryPlugin;
+    authResults?: AuthCheckResult[];
     onAdd: () => void;
     onRemove: () => void;
+    onRefreshAuth?: () => Promise<AuthCheckResult[]>;
+    onCancelAuth?: () => void;
   }
 
-  let { name, status, detail, registryInfo, onAdd, onRemove }: Props = $props();
+  let { name, status, detail, registryInfo, authResults = [], onAdd, onRemove, onRefreshAuth, onCancelAuth }: Props = $props();
 
   let showSettings = $state(false);
   let editing = $state(false);
@@ -19,6 +25,9 @@
   let saving = $state(false);
   let confirmRemove = $state(false);
   let adding = $state(false);
+  let installing = $state(false);
+  let installError = $state<string | null>(null);
+  let refreshingAuth = $state(false);
 
   function startEditing() {
     if (!detail) return;
@@ -60,6 +69,26 @@
     adding = false;
   }
 
+  async function handleInstall() {
+    installing = true;
+    installError = null;
+    try {
+      const result = await installPluginViaCli(name);
+      if (result.success) {
+        log.info("Plugins", `Installed ${name}`);
+        await refreshCliStatus();
+      } else {
+        installError = result.output || "Installation failed";
+        log.error("Plugins", `Failed to install ${name}: ${result.output}`);
+      }
+    } catch (err) {
+      installError = String(err);
+      log.error("Plugins", `Failed to install ${name}: ${err}`);
+    } finally {
+      installing = false;
+    }
+  }
+
   function handleRemoveClick() {
     if (confirmRemove) {
       onRemove();
@@ -87,6 +116,69 @@
     return JSON.stringify(val);
   }
 
+  let hasAuth = $derived(authResults.length > 0);
+
+  let hasAuthenticator = $derived(
+    registryInfo?.capabilities.includes("authenticator") ?? false,
+  );
+
+  async function handleRefreshAuth() {
+    if (!onRefreshAuth) return;
+    refreshingAuth = true;
+    try {
+      await onRefreshAuth();
+    } finally {
+      refreshingAuth = false;
+    }
+  }
+
+  function authStatusColor(s: string): string {
+    switch (s) {
+      case "ok":
+        return "text-green-400";
+      case "warn":
+        return "text-amber-400";
+      case "expired":
+        return "text-amber-400";
+      case "fail":
+        return "text-accent";
+      default:
+        return "text-text-muted";
+    }
+  }
+
+  function authStatusDot(s: string): string {
+    switch (s) {
+      case "ok":
+        return "bg-green-400";
+      case "warn":
+        return "bg-amber-400";
+      case "expired":
+        return "bg-amber-400";
+      case "fail":
+        return "bg-accent";
+      default:
+        return "bg-zinc-500";
+    }
+  }
+
+  function authStatusLabel(s: string): string {
+    switch (s) {
+      case "ok":
+        return "authenticated";
+      case "warn":
+        return "warning";
+      case "expired":
+        return "expired";
+      case "fail":
+        return "failed";
+      case "not_configured":
+        return "not configured";
+      default:
+        return s;
+    }
+  }
+
   let settingsEntries = $derived(
     detail ? Object.entries(detail.settings) : [],
   );
@@ -96,9 +188,11 @@
   let borderClass = $derived(
     status === "enabled"
       ? "border-secondary/40"
-      : status === "disabled"
-        ? "border-border"
-        : "border-border/40 border-dashed",
+      : status === "enabled_not_installed"
+        ? "border-amber-500/40"
+        : status === "disabled"
+          ? "border-border"
+          : "border-border/40 border-dashed",
   );
 </script>
 
@@ -108,7 +202,9 @@
     <div class="flex-1 min-w-0">
       <div class="flex items-center gap-2">
         <h3 class="font-medium">{name}</h3>
-        {#if status === "available"}
+        {#if status === "enabled_not_installed"}
+          <span class="px-2 py-0.5 rounded-full bg-amber-900/60 text-amber-300 text-xs">not installed</span>
+        {:else if status === "available"}
           <span class="px-2 py-0.5 rounded-full bg-bg text-text-muted text-xs">not configured</span>
         {:else if status === "disabled"}
           <span class="px-2 py-0.5 rounded-full bg-bg text-text-muted text-xs">disabled</span>
@@ -128,14 +224,15 @@
         <button
           class="relative w-10 h-5 rounded-full transition-colors cursor-pointer"
           class:bg-secondary={status === "enabled"}
-          class:bg-border={status !== "enabled"}
+          class:bg-amber-500={status === "enabled_not_installed"}
+          class:bg-border={status === "disabled"}
           onclick={handleToggle}
-          title={status === "enabled" ? "Disable" : "Enable"}
+          title={status === "enabled" || status === "enabled_not_installed" ? "Disable" : "Enable"}
         >
           <div
             class="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform"
-            class:translate-x-5={status === "enabled"}
-            class:translate-x-0.5={status !== "enabled"}
+            class:translate-x-5={status === "enabled" || status === "enabled_not_installed"}
+            class:translate-x-0.5={status === "disabled"}
           ></div>
         </button>
 
@@ -186,6 +283,94 @@
         </span>
       {/each}
     </div>
+  {/if}
+
+  <!-- Auth status -->
+  {#if (hasAuth || hasAuthenticator) && status === "enabled"}
+    <div class="border-t border-border/50 px-4 py-3 bg-bg/30">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-xs font-semibold uppercase tracking-wider text-text-muted">Authorization</span>
+        {#if hasAuthenticator}
+          <div class="flex items-center gap-2">
+            {#if refreshingAuth}
+              <button
+                class="px-2.5 py-1 text-[11px] font-medium border border-accent/50 text-accent hover:border-accent rounded transition-colors"
+                onclick={() => onCancelAuth?.()}
+              >
+                Cancel
+              </button>
+            {/if}
+            <button
+              class="px-2.5 py-1 text-[11px] font-medium border border-border text-text-muted hover:text-text hover:border-secondary rounded transition-colors disabled:opacity-50"
+              disabled={refreshingAuth}
+              onclick={handleRefreshAuth}
+            >
+              {refreshingAuth ? "Authenticating..." : "Re-authenticate"}
+            </button>
+          </div>
+        {/if}
+      </div>
+
+      {#if hasAuth}
+        <div class="space-y-2">
+          {#each authResults as result (result.service)}
+            <div class="flex items-start gap-2">
+              <span class="mt-1.5 w-2 h-2 rounded-full shrink-0 {authStatusDot(result.status)}"></span>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-baseline gap-2">
+                  <span class="text-sm font-medium">{result.service}</span>
+                  <span class="text-[11px] {authStatusColor(result.status)}">{authStatusLabel(result.status)}</span>
+                </div>
+
+                {#if result.identity}
+                  <p class="text-xs text-text-muted truncate" title={result.identity}>{result.identity}</p>
+                {/if}
+
+                {#if result.expires_at}
+                  <p class="text-[11px] text-text-muted">
+                    Expires: {new Date(result.expires_at).toLocaleDateString()}
+                  </p>
+                {/if}
+
+                {#if result.scopes && result.required_scopes}
+                  {@const missing = result.required_scopes.filter((s) => !result.scopes!.includes(s))}
+                  {#if missing.length > 0}
+                    <p class="text-[11px] text-amber-400">
+                      Missing scopes: {missing.join(", ")}
+                    </p>
+                  {/if}
+                {/if}
+
+                {#if result.hint}
+                  <p class="text-[11px] text-text-muted italic">{result.hint}</p>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <p class="text-xs text-text-muted">No auth status available. Click Re-authenticate to connect.</p>
+      {/if}
+    </div>
+  {/if}
+
+  <!-- Install action for enabled but not installed plugins -->
+  {#if status === "enabled_not_installed"}
+    <div class="px-4 pb-2 flex items-center gap-3">
+      <p class="text-xs text-amber-400">Enabled in config but not installed.</p>
+      <button
+        class="px-3 py-1 text-xs font-medium bg-amber-600 hover:bg-amber-500 text-white rounded-lg transition-colors disabled:opacity-50"
+        disabled={installing}
+        onclick={handleInstall}
+      >
+        {installing ? "Installing..." : "Install"}
+      </button>
+    </div>
+    {#if installError}
+      <div class="px-4 pb-2">
+        <p class="text-xs text-accent">{installError}</p>
+      </div>
+    {/if}
   {/if}
 
   <!-- Registry meta for available plugins -->

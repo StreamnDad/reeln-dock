@@ -1,0 +1,153 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run test
+
+  rust-linux:
+    name: Rust (Linux)
+    runs-on: ubuntu-latest
+    # TODO: switch to container once ghcr.io/streamndad/tauri-ci:latest is built
+    # container:
+    #   image: ghcr.io/streamndad/tauri-ci:latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: reeln-dock
+
+      - uses: actions/checkout@v4
+        with:
+          repository: StreamnDad/reeln-core
+          path: reeln-core
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: reeln-dock/src-tauri
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            libavcodec-dev libavformat-dev libavfilter-dev libavdevice-dev \
+            libavutil-dev libswscale-dev libswresample-dev pkg-config
+
+      - name: Check formatting
+        working-directory: reeln-dock/src-tauri
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        working-directory: reeln-dock/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        working-directory: reeln-dock/src-tauri
+        run: cargo test
+
+  rust-macos:
+    name: Rust (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: reeln-dock
+
+      - uses: actions/checkout@v4
+        with:
+          repository: StreamnDad/reeln-core
+          path: reeln-core
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: reeln-dock/src-tauri
+
+      - name: Install system dependencies
+        run: |
+          brew install ffmpeg pkg-config
+          echo "PKG_CONFIG_PATH=$(brew --prefix ffmpeg)/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+
+      - name: Clippy
+        working-directory: reeln-dock/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        working-directory: reeln-dock/src-tauri
+        run: cargo test
+
+  rust-windows:
+    name: Rust (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: reeln-dock
+
+      - uses: actions/checkout@v4
+        with:
+          repository: StreamnDad/reeln-core
+          path: reeln-core
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: reeln-dock/src-tauri
+
+      - name: Cache FFmpeg
+        uses: actions/cache@v4
+        id: ffmpeg-cache
+        with:
+          path: ffmpeg
+          key: ffmpeg-win64-shared-7.1
+
+      - name: Install FFmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          curl -sL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-win64-gpl-shared-7.1.zip" -o ffmpeg.zip
+          7z x ffmpeg.zip
+          mv ffmpeg-n7.1-latest-win64-gpl-shared-7.1 ffmpeg
+
+      - name: Set FFmpeg env
+        shell: bash
+        run: |
+          echo "FFMPEG_DIR=${GITHUB_WORKSPACE}/ffmpeg" >> $GITHUB_ENV
+          echo "${GITHUB_WORKSPACE}/ffmpeg/bin" >> $GITHUB_PATH
+
+      - name: Clippy
+        working-directory: reeln-dock/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        working-directory: reeln-dock/src-tauri
+        run: cargo test

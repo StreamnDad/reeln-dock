@@ -1,22 +1,28 @@
 <script lang="ts">
   import { convertFileSrc } from "@tauri-apps/api/core";
-  import { tick } from "svelte";
   import type { GameEvent, GameSummary, RenderEntry } from "$lib/types/game";
   import type { EventTypeEntry, RenderProfile } from "$lib/types/config";
   import type { RenderOverrides, IterationItem } from "$lib/types/render";
   import { probeClip, openInFinder } from "$lib/ipc/media";
   import { updateGameEvent, quickTagEvent } from "$lib/ipc/games";
   import { loadTeamRoster, type RosterEntry } from "$lib/ipc/teams";
-  import { renderShort, renderIteration, renderPreview, deletePreview, listRenderProfiles } from "$lib/ipc/render";
+  import { renderPreview, deletePreview, listRenderProfiles } from "$lib/ipc/render";
   import { listConfigProfiles } from "$lib/ipc/plugins";
   import type { ConfigProfile } from "$lib/types/plugin";
-  import { addToQueue as addToRenderQueue } from "$lib/stores/renderQueue.svelte";
+  import { addToQueue as addToRenderQueue, isClipInQueue } from "$lib/stores/renderQueue.svelte";
+  import { editingQueueItem } from "$lib/stores/navigation";
   import { getDockSettings } from "$lib/stores/config.svelte";
+  import { useStore } from "$lib/stores/bridge.svelte";
   import * as uiPrefs from "$lib/stores/uiPrefs.svelte";
   import { log } from "$lib/stores/log.svelte";
   import type { MediaInfoResponse } from "$lib/types/media";
   import VideoPlayer from "./VideoPlayer.svelte";
   import RenderPlaybackModal from "./RenderPlaybackModal.svelte";
+  import DynamicPluginFields from "./DynamicPluginFields.svelte";
+  import CliGate from "$lib/components/CliGate.svelte";
+  import HelpLink from "$lib/components/HelpLink.svelte";
+  import { help } from "$lib/help";
+  import { getActiveFieldsForScreen } from "$lib/stores/pluginUI.svelte";
 
   interface Props {
     event: GameEvent;
@@ -48,7 +54,6 @@
   // Persisted across navigation via uiPrefs store (read via getter, write via setter)
   let autoPlay = $derived(uiPrefs.getAutoPlay());
   let autoAdvance = $derived(uiPrefs.getAutoAdvance());
-  let showRender = $derived(uiPrefs.getShowRender());
   let showDetails = $derived(uiPrefs.getShowDetails());
   let showMediaInfo = $derived(uiPrefs.getShowMediaInfo());
 
@@ -58,6 +63,9 @@
   let selectedPluginProfile = $state("");
   let renderMode = $state<"short" | "apply">("short");
   let renderResult = $state<RenderEntry | null>(null);
+
+  // Plugin-contributed render option fields
+  let pluginFieldGroups = $derived(getActiveFieldsForScreen("render_options"));
   let renderQueue = $state<IterationItem[]>([]);
   let concatOutput = $state(true);
   let addProfileName = $state("");
@@ -75,6 +83,7 @@
 
   // Queue state
   let queueAdded = $state(false);
+  let debugEnabled = $state(false);
 
   // Roster data for player assignment
   let homeRoster = $state<RosterEntry[]>([]);
@@ -137,15 +146,50 @@
     if (dockRendering?.concat_by_default != null) {
       concatOutput = dockRendering.concat_by_default;
     }
-    // Apply default render overrides from dock
-    const dockOverrides = dockRendering?.overrides;
-    if (dockOverrides) {
-      overrides = {
-        crop_mode: dockOverrides.crop_mode,
-        scale: dockOverrides.scale,
-        speed: dockOverrides.speed,
-        smart: dockOverrides.smart,
-      };
+    // Apply default render mode from dock
+    if (dockRendering?.default_render_mode) {
+      renderMode = dockRendering.default_render_mode as "short" | "apply";
+    }
+    // Apply default render overrides from dock.
+    //
+    // Merge order: plugin defaults first (from Settings → Plugin Defaults,
+    // stored in rendering.plugin_field_defaults), then dock overrides
+    // (Settings → Render Overrides) on top. Previously this spread plugin
+    // defaults and then explicitly re-assigned every core key — which
+    // silently clobbered plugin-contributed fields like `zoom_frames`
+    // with `undefined` whenever the user had no matching dock override,
+    // so "Zoom Frames = 16" in plugin defaults never reached this panel.
+    const dockOverrides = (dockRendering?.overrides ?? {}) as Record<string, unknown>;
+    const pluginDefaults = (dockRendering?.plugin_field_defaults as Record<string, unknown>) ?? {};
+    const merged: Record<string, unknown> = { ...pluginDefaults, ...dockOverrides };
+    // Ensure the scale/speed sliders always have a concrete default — they
+    // are only persisted to dockOverrides when the user changes them away
+    // from 1.0, so an unset merge result should fall back to 1.0.
+    if (merged.scale == null) merged.scale = 1.0;
+    if (merged.speed == null) merged.speed = 1.0;
+    overrides = merged as RenderOverrides;
+  });
+
+  // Prefill from queue edit request
+  const getEditRequest = useStore(editingQueueItem);
+  $effect(() => {
+    const req = getEditRequest();
+    if (req && req.eventId === event.id) {
+      // Prefill settings from the queue item
+      if (req.mode) renderMode = req.mode;
+      if (req.profiles.length > 0) {
+        renderQueue = req.profiles.map((p) => ({
+          profile_name: p.profile_name,
+          overrides: p.overrides as import("$lib/types/render").RenderOverrides | undefined,
+        }));
+      }
+      concatOutput = req.concatOutput;
+      if (req.overrides) overrides = req.overrides as import("$lib/types/render").RenderOverrides;
+      if (req.pluginProfile) selectedPluginProfile = req.pluginProfile;
+      // Open render options so user can see the prefilled settings
+      uiPrefs.setShowRender(true);
+      // Clear the request
+      editingQueueItem.set(null);
     }
   });
 
@@ -157,6 +201,9 @@
   let fullClipPath = $derived(resolveClipPath(event.clip));
   let videoSrc = $derived(convertFileSrc(fullClipPath));
   let videoError = $state(false);
+
+  // Duplicate detection — warn when this clip is already in the queue
+  let clipAlreadyInQueue = $derived(isClipInQueue(fullClipPath));
 
   // Current tag state
   let currentTeam = $derived(
@@ -232,10 +279,6 @@
       const newState = await quickTagEvent(game.dir_path, event.id, typeName, team);
       onUpdateGame?.(game.dir_path, (g) => ({ ...g, state: newState }));
       log.info("ClipReview", `Tagged ${event.id} as ${team ? team + " " : ""}${typeName}`);
-      if (autoAdvance) {
-        await tick();
-        onNext?.();
-      }
     } catch (err) {
       log.error("ClipReview", `Quick tag failed: ${err}`);
     }
@@ -247,14 +290,28 @@
     }
   }
 
-  // Keyboard: media keys + escape
+  // Keyboard: arrow keys, spacebar, media keys, escape
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "MediaTrackNext") {
+    // Skip when user is typing in an input/textarea
+    const tag = (e.target as HTMLElement)?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+    if (e.key === "ArrowRight" || e.key === "MediaTrackNext") {
       e.preventDefault();
       onNext?.();
-    } else if (e.key === "MediaTrackPrevious") {
+    } else if (e.key === "ArrowLeft" || e.key === "MediaTrackPrevious") {
       e.preventDefault();
       onPrev?.();
+    } else if (e.key === " ") {
+      e.preventDefault();
+      const video = document.querySelector("video");
+      if (video) {
+        if (video.paused) {
+          video.play().catch(() => {});
+        } else {
+          video.pause();
+        }
+      }
     } else if (e.key === "Escape" && expanded) {
       e.preventDefault();
       onToggleExpand?.();
@@ -325,52 +382,18 @@
 
   function cleanOverrides(ovr: RenderOverrides): RenderOverrides | undefined {
     const clean: RenderOverrides = {};
-    if (ovr.crop_mode) clean.crop_mode = ovr.crop_mode;
-    if (ovr.scale != null && ovr.scale !== 1.0) clean.scale = ovr.scale;
-    if (ovr.speed != null && ovr.speed !== 1.0) clean.speed = ovr.speed;
-    if (ovr.smart != null) clean.smart = ovr.smart;
-    if (ovr.anchor_x != null) clean.anchor_x = ovr.anchor_x;
-    if (ovr.anchor_y != null) clean.anchor_y = ovr.anchor_y;
-    if (ovr.pad_color) clean.pad_color = ovr.pad_color;
-    return Object.keys(clean).length > 0 ? clean : undefined;
-  }
-
-  async function handleRender() {
-    if (renderQueue.length === 0) return;
-    renderLoading = true;
-    renderError = "";
-    renderSuccess = "";
-    renderResult = null;
-    try {
-      const outputDir = game.dir_path + "/renders";
-      const effectiveOverrides = cleanOverrides(overrides);
-      let resultEntry: RenderEntry | null = null;
-      if (renderQueue.length === 1) {
-        const item = renderQueue[0];
-        const mergedOverrides = effectiveOverrides ? { ...effectiveOverrides, ...item.overrides } : item.overrides;
-        const entry = await renderShort(fullClipPath, outputDir, item.profile_name, event.id, game.dir_path, mergedOverrides, renderMode);
-        resultEntry = entry;
-      } else {
-        const items: IterationItem[] = renderQueue.map((item) => ({
-          profile_name: item.profile_name,
-          overrides: effectiveOverrides ? { ...effectiveOverrides, ...item.overrides } : item.overrides,
-        }));
-        const entries = await renderIteration(fullClipPath, outputDir, items, event.id, game.dir_path, concatOutput, renderMode);
-        resultEntry = entries[0] ?? null;
-      }
-      const { getGameState } = await import("$lib/ipc/games");
-      const newState = await getGameState(game.dir_path);
-      onUpdateGame?.(game.dir_path, (g) => ({ ...g, state: newState }));
-      // Auto-show the result
-      if (resultEntry) {
-        renderResult = resultEntry;
-      }
-    } catch (err) {
-      renderError = String(err);
-      log.error("ClipReview", `Render failed: ${err}`);
-    } finally {
-      renderLoading = false;
+    for (const [key, value] of Object.entries(ovr)) {
+      if (value == null) continue;
+      // Skip defaults: scale=1.0 and speed=1.0 are no-ops
+      if (key === "scale" && value === 1.0) continue;
+      if (key === "speed" && value === 1.0) continue;
+      // Skip false booleans (e.g. smart=false is a no-op)
+      if (value === false) continue;
+      // Skip empty strings
+      if (value === "") continue;
+      clean[key] = value;
     }
+    return Object.keys(clean).length > 0 ? clean : undefined;
   }
 
   async function handleRenderPreview() {
@@ -405,6 +428,32 @@
   function handleAddToQueue() {
     if (renderQueue.length === 0) return;
     const info = game.state.game_info;
+
+    // Resolve selected player names to jersey numbers so the CLI can do its
+    // canonical roster lookup via --player-numbers. That lookup is what pulls
+    // in the team logo and scoring team; passing only --player/--assists
+    // skips it entirely and the overlay renders without the #NN prefix or
+    // the team logo.
+    //
+    // Only switch to number-based passing when every non-empty selection
+    // resolves cleanly; otherwise fall back to the raw names to preserve
+    // user intent (e.g. free-text entries that don't match the roster).
+    const resolveNumber = (name: string): { num?: string; orphaned: boolean } => {
+      if (!name) return { orphaned: false };
+      const entry = activeRoster.find((e) => e.name === name);
+      if (entry?.number) return { num: entry.number, orphaned: false };
+      return { orphaned: true };
+    };
+
+    const scorerRes = resolveNumber(currentScorer);
+    const assist1Res = resolveNumber(currentAssist1);
+    const assist2Res = resolveNumber(currentAssist2);
+    const anyOrphaned = scorerRes.orphaned || assist1Res.orphaned || assist2Res.orphaned;
+    const resolvedNumbers = [scorerRes.num, assist1Res.num, assist2Res.num]
+      .filter((n): n is string => Boolean(n));
+    const canUseRoster = !anyOrphaned && resolvedNumbers.length > 0;
+    const playerNumbers = canUseRoster ? resolvedNumbers.join(",") : undefined;
+
     addToRenderQueue({
       gameDir: game.dir_path,
       gameName: `${info.home_team} vs ${info.away_team}`,
@@ -415,6 +464,15 @@
       concatOutput: concatOutput,
       overrides: cleanOverrides(overrides),
       pluginProfile: selectedPluginProfile || undefined,
+      mode: renderMode,
+      debug: debugEnabled || undefined,
+      // When playerNumbers is set, let the CLI resolve names via roster so
+      // the overlay shows "#48 Smith" and loads the team logo. Otherwise
+      // fall back to passing the raw names.
+      scorer: canUseRoster ? undefined : (currentScorer || undefined),
+      assist1: canUseRoster ? undefined : (currentAssist1 || undefined),
+      assist2: canUseRoster ? undefined : (currentAssist2 || undefined),
+      playerNumbers,
     });
     queueAdded = true;
     setTimeout(() => { queueAdded = false; }, 1500);
@@ -494,6 +552,7 @@
         {#key event.id}
           <VideoPlayer
             src={videoSrc}
+            originalPath={fullClipPath}
             autoplay={autoPlay}
             onended={handleVideoEnded}
             onerror={() => { videoError = true; }}
@@ -522,6 +581,10 @@
 
   <!-- Quick-Tag Pills -->
   {#if eventTypes.length > 0}
+    <div class="flex items-center gap-1.5 mb-1">
+      <span class="text-xs text-text-muted">Event Type</span>
+      <HelpLink text={help["clip.event_tagging"].text} url={help["clip.event_tagging"].url} />
+    </div>
     <div class="flex flex-wrap gap-1.5">
       {#each eventTypes as et}
         {#if et.team_specific}
@@ -568,6 +631,10 @@
 
   <!-- Player Assignment (scorer + assists) -->
   {#if event.event_type}
+    <div class="flex items-center gap-1.5 mb-1">
+      <span class="text-xs text-text-muted">Player Assignment</span>
+      <HelpLink text={help["clip.player_lookup"].text} url={help["clip.player_lookup"].url} />
+    </div>
     <div class="space-y-1.5">
       {#each [{ id: "scorer", label: "Scorer", value: currentScorer }, { id: "assist1", label: "Assist 1", value: currentAssist1 }, { id: "assist2", label: "Assist 2", value: currentAssist2 }] as field}
         <div class="flex items-center gap-2">
@@ -600,15 +667,8 @@
     </div>
   {/if}
 
-  <!-- Collapsible: Render Options -->
-  <button
-    class="w-full text-left text-xs text-text-muted hover:text-text transition-colors flex items-center gap-1"
-    onclick={() => uiPrefs.setShowRender(!showRender)}
-  >
-    <span class="transition-transform" class:rotate-90={showRender}>&#9654;</span>
-    Render Options
-  </button>
-  {#if showRender}
+  <!-- Render Options (always visible) -->
+  <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">Render Options <HelpLink text={help["clip.render_short"].text} url={help["clip.render_short"].url} /></h3>
     <div class="bg-surface rounded-lg border border-border p-4 space-y-3">
       {#if renderError}
         <div class="px-3 py-2 bg-red-900/30 border border-red-800 rounded-lg text-sm text-red-300">{renderError}</div>
@@ -616,6 +676,25 @@
       {#if renderSuccess}
         <div class="px-3 py-2 bg-green-900/30 border border-green-800 rounded-lg text-sm text-green-300">{renderSuccess}</div>
       {/if}
+
+      <!-- Plugin profile (requires CLI) — top of render options -->
+      <CliGate requires="cli" showMessage={true}>
+        {#if pluginProfiles.length > 0}
+          <div>
+            <label class="block text-sm font-medium text-text mb-1" for="clip-plugin-profile">Plugin Profile</label>
+            <select
+              id="clip-plugin-profile"
+              bind:value={selectedPluginProfile}
+              class="w-full px-2 py-2 bg-bg border border-border rounded-lg text-sm text-text focus:outline-none focus:border-secondary"
+            >
+              <option value="">None (no plugins)</option>
+              {#each pluginProfiles as pp}
+                <option value={pp.name}>{pp.name}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
+      </CliGate>
 
       {#if renderQueue.length > 0}
         <div class="space-y-1">
@@ -688,23 +767,6 @@
         </div>
       </div>
 
-      <!-- Plugin profile -->
-      {#if pluginProfiles.length > 0}
-        <div>
-          <label class="block text-xs text-text-muted mb-1" for="clip-plugin-profile">Plugin Profile</label>
-          <select
-            id="clip-plugin-profile"
-            bind:value={selectedPluginProfile}
-            class="w-full px-2 py-1.5 bg-bg border border-border rounded-lg text-xs text-text focus:outline-none focus:border-secondary"
-          >
-            <option value="">None (no plugins)</option>
-            {#each pluginProfiles as pp}
-              <option value={pp.name}>{pp.name}</option>
-            {/each}
-          </select>
-        </div>
-      {/if}
-
       <button
         class="w-full text-left text-xs text-text-muted hover:text-text transition-colors flex items-center gap-1"
         onclick={() => showOverrides = !showOverrides}
@@ -730,23 +792,19 @@
             </div>
           {/if}
           <div>
-            <label class="block text-xs text-text-muted mb-1" for="scale">Scale: {overrides.scale?.toFixed(1) ?? "default"}</label>
+            <label class="block text-xs text-text-muted mb-1" for="scale">Scale: {(overrides.scale ?? 1.0).toFixed(1)}</label>
             <div class="flex items-center gap-2">
-              <input id="scale" type="range" min="0.5" max="3.0" step="0.1" bind:value={overrides.scale} class="flex-1 accent-secondary" />
-              <button class="text-[10px] text-text-muted hover:text-text" onclick={() => overrides.scale = undefined}>reset</button>
+              <input id="scale" type="range" min="0.5" max="3.0" step="0.1" value={overrides.scale ?? 1.0} oninput={(e) => overrides.scale = Number((e.target as HTMLInputElement).value)} class="flex-1 accent-secondary" />
+              <button class="text-[10px] text-text-muted hover:text-text" onclick={() => overrides.scale = 1.0}>reset</button>
             </div>
           </div>
           <div>
-            <label class="block text-xs text-text-muted mb-1" for="speed">Speed: {overrides.speed?.toFixed(1) ?? "default"}x</label>
+            <label class="block text-xs text-text-muted mb-1" for="speed">Speed: {(overrides.speed ?? 1.0).toFixed(1)}x</label>
             <div class="flex items-center gap-2">
-              <input id="speed" type="range" min="0.5" max="2.0" step="0.1" bind:value={overrides.speed} class="flex-1 accent-secondary" />
-              <button class="text-[10px] text-text-muted hover:text-text" onclick={() => overrides.speed = undefined}>reset</button>
+              <input id="speed" type="range" min="0.5" max="2.0" step="0.1" value={overrides.speed ?? 1.0} oninput={(e) => overrides.speed = Number((e.target as HTMLInputElement).value)} class="flex-1 accent-secondary" />
+              <button class="text-[10px] text-text-muted hover:text-text" onclick={() => overrides.speed = 1.0}>reset</button>
             </div>
           </div>
-          <label class="flex items-center gap-2 text-sm text-text-muted cursor-pointer">
-            <input type="checkbox" bind:checked={overrides.smart} class="accent-secondary" />
-            Smart zoom
-          </label>
           <div>
             <label class="block text-xs text-text-muted mb-1" for="anchor">Anchor</label>
             <select id="anchor" class="w-full px-2 py-1 bg-bg border border-border rounded text-sm text-text focus:outline-none focus:border-secondary" onchange={(e) => {
@@ -763,23 +821,37 @@
               <option value="right">Right</option>
             </select>
           </div>
+          <!-- Plugin-contributed fields -->
+          {#each pluginFieldGroups as group}
+            <DynamicPluginFields
+              fields={group.fields}
+              values={overrides}
+              pluginName={group.pluginName}
+              onchange={(key, value) => { overrides = { ...overrides, [key]: value }; }}
+            />
+          {/each}
+        </div>
+      {/if}
+
+      <label class="flex items-center gap-2 text-xs text-text-muted cursor-pointer">
+        <input type="checkbox" bind:checked={debugEnabled} class="accent-secondary" />
+        Debug (write artifacts + index.html)
+        <HelpLink text={help["clip.debug"].text} url={help["clip.debug"].url} />
+      </label>
+
+      {#if clipAlreadyInQueue}
+        <div class="px-2 py-1.5 bg-yellow-900/20 border border-yellow-800/50 rounded text-[11px] text-yellow-400">
+          This clip is already in the render queue
         </div>
       {/if}
 
       <div class="flex gap-2">
         <button
           class="flex-1 px-3 py-2 bg-primary hover:bg-primary-light text-text rounded-lg text-sm font-medium transition-colors disabled:opacity-50 text-center"
-          disabled={renderLoading || renderQueue.length === 0}
-          onclick={handleRender}
-        >
-          {renderLoading ? "Rendering..." : renderQueue.length > 1 ? `Render ${renderQueue.length} Formats` : "Render Short"}
-        </button>
-        <button
-          class="px-3 py-2 bg-surface border border-border rounded-lg text-sm hover:bg-surface-hover transition-colors disabled:opacity-50 text-center whitespace-nowrap"
           disabled={renderQueue.length === 0}
           onclick={handleAddToQueue}
         >
-          {queueAdded ? "Added" : "+ Queue"}
+          {queueAdded ? "Added to Queue" : "+ Queue"}
         </button>
       </div>
       <!-- Preview with profile selector -->
@@ -804,7 +876,6 @@
         </button>
       </div>
     </div>
-  {/if}
 
   <!-- Collapsible: Event Details -->
   <button

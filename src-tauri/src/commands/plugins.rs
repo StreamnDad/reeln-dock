@@ -32,6 +32,9 @@ pub struct RegistryPlugin {
     pub min_reeln_version: String,
     pub author: String,
     pub license: String,
+    /// Plugin UI contributions — screens and fields the plugin declares.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_contributions: Option<serde_json::Value>,
 }
 
 #[derive(serde::Deserialize)]
@@ -44,9 +47,7 @@ struct PluginRegistry {
 /// List config profile files in the config directory.
 /// Discovers `config.*.json` files plus the active config.
 #[tauri::command]
-pub fn list_config_profiles(
-    state: State<'_, AppState>,
-) -> Result<Vec<ConfigProfile>, String> {
+pub fn list_config_profiles(state: State<'_, AppState>) -> Result<Vec<ConfigProfile>, String> {
     let config_dir = state.effective_config_dir();
     let settings = state.dock_settings.lock().map_err(|e| e.to_string())?;
     let active_path = settings.reeln_config_path.clone().unwrap_or_default();
@@ -113,9 +114,7 @@ pub fn list_config_profiles(
 
 /// List plugins and their settings from a specific config profile.
 #[tauri::command]
-pub fn list_plugins_for_profile(
-    profile_path: String,
-) -> Result<Vec<PluginDetail>, String> {
+pub fn list_plugins_for_profile(profile_path: String) -> Result<Vec<PluginDetail>, String> {
     let config = load_config_file(&profile_path)?;
     let mut plugins = Vec::new();
 
@@ -260,16 +259,13 @@ pub fn update_plugin_in_config(
 /// Tries workspace-relative path first, then the configured registry URL,
 /// then the default GitHub raw URL.
 #[tauri::command]
-pub fn fetch_plugin_registry(
-    state: State<'_, AppState>,
-) -> Result<Vec<RegistryPlugin>, String> {
+pub fn fetch_plugin_registry(state: State<'_, AppState>) -> Result<Vec<RegistryPlugin>, String> {
     // 1. Try workspace-relative path (dev mode)
     let workspace_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../reeln-cli/registry/plugins.json");
     if workspace_path.is_file() {
         let content = std::fs::read_to_string(&workspace_path).map_err(|e| e.to_string())?;
-        let registry: PluginRegistry =
-            serde_json::from_str(&content).map_err(|e| e.to_string())?;
+        let registry: PluginRegistry = serde_json::from_str(&content).map_err(|e| e.to_string())?;
         return Ok(registry.plugins);
     }
 
@@ -277,8 +273,7 @@ pub fn fetch_plugin_registry(
     let config_registry = state.effective_config_dir().join("registry/plugins.json");
     if config_registry.is_file() {
         let content = std::fs::read_to_string(&config_registry).map_err(|e| e.to_string())?;
-        let registry: PluginRegistry =
-            serde_json::from_str(&content).map_err(|e| e.to_string())?;
+        let registry: PluginRegistry = serde_json::from_str(&content).map_err(|e| e.to_string())?;
         return Ok(registry.plugins);
     }
 
@@ -322,11 +317,7 @@ pub fn add_plugin_to_config(
 
     if !in_enabled && !in_disabled {
         // Add to enabled
-        let arr = plugins
-            .get_mut("enabled")
-            .unwrap()
-            .as_array_mut()
-            .unwrap();
+        let arr = plugins.get_mut("enabled").unwrap().as_array_mut().unwrap();
         arr.push(name_val);
 
         // Create empty settings entry
@@ -424,9 +415,7 @@ pub fn create_config_profile(
 
 /// Get version information for the app and config.
 #[tauri::command]
-pub fn get_version_info(
-    state: State<'_, AppState>,
-) -> Result<VersionInfo, String> {
+pub fn get_version_info(state: State<'_, AppState>) -> Result<VersionInfo, String> {
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let config_version = config.as_ref().map(|c| c.config_version);
 
@@ -502,7 +491,10 @@ pub fn set_enforce_hooks(
         .and_then(|p| p.as_object_mut())
         .ok_or("Config missing 'plugins' section")?;
 
-    plugins.insert("enforce_hooks".to_string(), serde_json::Value::Bool(enforce));
+    plugins.insert(
+        "enforce_hooks".to_string(),
+        serde_json::Value::Bool(enforce),
+    );
 
     save_raw_config(&profile_path, &raw)?;
     reload_if_active(&profile_path, &state)?;
@@ -522,3 +514,257 @@ fn reload_if_active(profile_path: &str, state: &AppState) -> Result<(), String> 
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── derive_profile_name ────────────────────────────────────────
+
+    #[test]
+    fn derive_profile_name_config_json_returns_default() {
+        assert_eq!(derive_profile_name("config.json"), "default");
+    }
+
+    #[test]
+    fn derive_profile_name_config_with_profile() {
+        assert_eq!(
+            derive_profile_name("config.production-google.json"),
+            "production-google"
+        );
+    }
+
+    #[test]
+    fn derive_profile_name_config_with_multi_dash() {
+        assert_eq!(
+            derive_profile_name("config.meta-ig-test.json"),
+            "meta-ig-test"
+        );
+    }
+
+    #[test]
+    fn derive_profile_name_non_config_prefix() {
+        assert_eq!(derive_profile_name("game.v1.json"), "game.v1");
+    }
+
+    #[test]
+    fn derive_profile_name_simple() {
+        assert_eq!(derive_profile_name("something.json"), "something");
+    }
+
+    // ── list_plugins_for_profile ───────────────────────────────────
+
+    fn write_config_json(dir: &std::path::Path, json: &serde_json::Value) -> String {
+        let path = dir.join("config.json");
+        let content = serde_json::to_string_pretty(json).unwrap();
+        std::fs::write(&path, content).unwrap();
+        path.display().to_string()
+    }
+
+    #[test]
+    fn list_plugins_enabled_and_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config_json(
+            dir.path(),
+            &serde_json::json!({
+                "config_version": 1,
+                "plugins": {
+                    "enabled": ["youtube", "openai"],
+                    "disabled": ["discord"],
+                    "settings": {
+                        "youtube": {"channel": "test"},
+                        "openai": {},
+                        "discord": {"webhook": "https://example.com"}
+                    }
+                }
+            }),
+        );
+
+        let plugins = list_plugins_for_profile(path).unwrap();
+
+        // sorted by name
+        assert_eq!(plugins.len(), 3);
+
+        let discord = plugins.iter().find(|p| p.name == "discord").unwrap();
+        assert!(!discord.enabled);
+        assert_eq!(discord.settings["webhook"], "https://example.com");
+
+        let openai = plugins.iter().find(|p| p.name == "openai").unwrap();
+        assert!(openai.enabled);
+
+        let youtube = plugins.iter().find(|p| p.name == "youtube").unwrap();
+        assert!(youtube.enabled);
+        assert_eq!(youtube.settings["channel"], "test");
+    }
+
+    #[test]
+    fn list_plugins_settings_only_plugin_shows_as_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config_json(
+            dir.path(),
+            &serde_json::json!({
+                "config_version": 1,
+                "plugins": {
+                    "enabled": ["youtube"],
+                    "disabled": [],
+                    "settings": {
+                        "youtube": {"channel": "test"},
+                        "standalone": {"key": "val"}
+                    }
+                }
+            }),
+        );
+
+        let plugins = list_plugins_for_profile(path).unwrap();
+        assert_eq!(plugins.len(), 2);
+
+        let standalone = plugins.iter().find(|p| p.name == "standalone").unwrap();
+        assert!(!standalone.enabled);
+        assert_eq!(standalone.settings["key"], "val");
+    }
+
+    #[test]
+    fn list_plugins_empty_plugins_section() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config_json(
+            dir.path(),
+            &serde_json::json!({
+                "config_version": 1,
+                "plugins": {
+                    "enabled": [],
+                    "disabled": [],
+                    "settings": {}
+                }
+            }),
+        );
+
+        let plugins = list_plugins_for_profile(path).unwrap();
+        assert!(plugins.is_empty());
+    }
+
+    #[test]
+    fn list_plugins_with_settings_no_explicit_lists() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config_json(
+            dir.path(),
+            &serde_json::json!({
+                "config_version": 1,
+                "plugins": {
+                    "enabled": ["openai"],
+                    "disabled": ["discord"],
+                    "settings": {
+                        "youtube": {"channel": "test"},
+                        "openai": {},
+                        "standalone": {"key": "val"}
+                    }
+                }
+            }),
+        );
+
+        let plugins = list_plugins_for_profile(path).unwrap();
+        assert_eq!(plugins.len(), 4);
+
+        // openai is in enabled
+        let openai = plugins.iter().find(|p| p.name == "openai").unwrap();
+        assert!(openai.enabled);
+
+        // discord is in disabled
+        let discord = plugins.iter().find(|p| p.name == "discord").unwrap();
+        assert!(!discord.enabled);
+
+        // youtube and standalone have settings but aren't in either list → disabled
+        let youtube = plugins.iter().find(|p| p.name == "youtube").unwrap();
+        assert!(!youtube.enabled);
+
+        let standalone = plugins.iter().find(|p| p.name == "standalone").unwrap();
+        assert!(!standalone.enabled);
+    }
+
+    // ── get_enforce_hooks ──────────────────────────────────────────
+
+    #[test]
+    fn get_enforce_hooks_true() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config_json(
+            dir.path(),
+            &serde_json::json!({
+                "config_version": 1,
+                "plugins": {
+                    "enabled": [],
+                    "disabled": [],
+                    "settings": {},
+                    "enforce_hooks": true
+                }
+            }),
+        );
+
+        assert!(get_enforce_hooks(path).unwrap());
+    }
+
+    #[test]
+    fn get_enforce_hooks_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config_json(
+            dir.path(),
+            &serde_json::json!({
+                "config_version": 1,
+                "plugins": {
+                    "enabled": [],
+                    "disabled": [],
+                    "settings": {},
+                    "enforce_hooks": false
+                }
+            }),
+        );
+
+        assert!(!get_enforce_hooks(path).unwrap());
+    }
+
+    #[test]
+    fn get_enforce_hooks_defaults_to_true_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config_json(
+            dir.path(),
+            &serde_json::json!({
+                "config_version": 1,
+                "plugins": {
+                    "enabled": [],
+                    "disabled": [],
+                    "settings": {}
+                }
+            }),
+        );
+
+        assert!(get_enforce_hooks(path).unwrap());
+    }
+
+    // ── load_raw_config + save_raw_config ──────────────────────────
+
+    #[test]
+    fn raw_config_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("roundtrip.json");
+        let path_str = path.display().to_string();
+
+        let original = serde_json::json!({
+            "config_version": 1,
+            "plugins": {
+                "enabled": ["youtube"],
+                "disabled": [],
+                "settings": {"youtube": {"channel": "test"}}
+            }
+        });
+
+        save_raw_config(&path_str, &original).unwrap();
+        let loaded = load_raw_config(&path_str).unwrap();
+
+        assert_eq!(original, loaded);
+    }
+
+    #[test]
+    fn load_raw_config_missing_file_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nonexistent.json");
+        let result = load_raw_config(&path.display().to_string());
+        assert!(result.is_err());
+    }
+}

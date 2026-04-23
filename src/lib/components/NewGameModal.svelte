@@ -6,10 +6,13 @@
   import { listTeamLevels, listTeamProfiles, saveTeamProfile } from "$lib/ipc/teams";
   import { listConfigProfiles, listPluginsForProfile } from "$lib/ipc/plugins";
   import { getPromptTemplate, savePromptTemplate } from "$lib/ipc/prompts";
+  import { loadTournamentMetadata, getTournamentMetadata } from "$lib/stores/tournaments.svelte";
   import type { GameSummary } from "$lib/types/game";
   import { log } from "$lib/stores/log.svelte";
   import { lookupTeam } from "$lib/stores/teams.svelte";
+  import { help } from "$lib/help";
   import TeamLogo from "$lib/components/TeamLogo.svelte";
+  import HelpLink from "$lib/components/HelpLink.svelte";
 
   interface Props {
     onclose: () => void;
@@ -38,9 +41,11 @@
   let allLevels = $derived(
     [...new Set([...knownLevels, ...historyLevels])].sort(),
   );
-  let allTournaments = $derived(
-    [...new Set(allGames.map((g) => g.state.game_info.tournament).filter(Boolean))].sort(),
-  );
+  let allTournaments = $derived.by(() => {
+    const fromGames = allGames.map((g) => g.state.game_info.tournament).filter(Boolean) as string[];
+    const fromMeta = getTournamentMetadata().map((m) => m.name);
+    return [...new Set([...fromGames, ...fromMeta])].sort();
+  });
   let allVenues = $derived(
     [...new Set(allGames.map((g) => g.state.game_info.venue).filter(Boolean))].sort(),
   );
@@ -61,9 +66,11 @@
   let addingNewVenue = $state(false);
   let newVenueName = $state("");
   let gameTime = $state("");
+  let gameTimezone = $state(Intl.DateTimeFormat().resolvedOptions().timeZone);
   let tournament = $state("");
   let addingNewTournament = $state(false);
   let newTournamentName = $state("");
+  let gameDescription = $state("");
 
   // AI preview state
   interface PromptState {
@@ -131,6 +138,7 @@
         else if (p.length > 0) selectConfigProfile(p[0]);
       })
       .catch((e) => log.error("NewGame", `Failed to load config profiles: ${e}`));
+    loadTournamentMetadata().catch(() => {});
   });
 
   function selectConfigProfile(profile: ConfigProfile) {
@@ -238,18 +246,51 @@
     }
   }
 
+  /** Mimic Python's `str(list)` repr (e.g. `['#FF0000', '#0000FF']`) so the
+   *  preview matches the openai plugin's runtime substitution byte-for-byte.
+   *  Returns "" when the profile/field is missing, matching the plugin's
+   *  `getattr(home, "colors", "")` default. */
+  function pyColorsRepr(profile: TeamProfile | undefined): string {
+    if (!profile) return "";
+    const colors = profile.colors ?? [];
+    return "[" + colors.map((c) => `'${c}'`).join(", ") + "]";
+  }
+
   function getPromptVars(): Record<string, string> {
+    // Mirror the openai plugin's _build_prompt_variables() so the preview
+    // matches what the plugin actually substitutes at runtime.
+    const homeProfile = teamsForLevel.find((t) => t.team_name === homeTeam.trim());
+    const awayProfile = teamsForLevel.find((t) => t.team_name === awayTeam.trim());
     return {
       home_team: homeTeam,
       away_team: awayTeam,
+      home_colors: pyColorsRepr(homeProfile),
+      away_colors: pyColorsRepr(awayProfile),
+      game_level: homeProfile?.level ?? "",
       date,
+      game_date: date,
       sport,
       venue,
-      game_time: gameTime,
+      rink: venue,
+      game_time: formatGameTime(),
       level,
       tournament,
-      description: "",
+      description: gameDescription.trim(),
     };
+  }
+
+  /** Format game_time as "H:MM AM/PM TZ" for the CLI and prompts.
+   *  The `<input type="time">` gives us "HH:MM" (24-hour). We convert
+   *  to 12-hour AM/PM and append the IANA timezone so dateutil can
+   *  reliably parse it (unlike "CDT" which is ambiguous). */
+  function formatGameTime(): string {
+    if (!gameTime) return "";
+    const [hStr, mStr] = gameTime.split(":");
+    const h = parseInt(hStr, 10);
+    const m = mStr ?? "00";
+    const ampm = h >= 12 ? "PM" : "AM";
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    return `${h12}:${m} ${ampm} ${gameTimezone}`;
   }
 
   function substituteVars(template: string, vars: Record<string, string>): string {
@@ -369,9 +410,10 @@
             awayTeam: awayTeam.trim(),
             date,
             venue: venue.trim() || undefined,
-            gameTime: gameTime.trim() || undefined,
+            gameTime: formatGameTime() || undefined,
             level: level.trim() || undefined,
             tournament: tournament.trim() || undefined,
+            description: gameDescription.trim() || undefined,
           });
           onGameCreated?.(result);
           createdDirPath = result.dir_path;
@@ -394,9 +436,10 @@
               away_team: awayTeam.trim(),
               date,
               venue: venue.trim(),
-              game_time: gameTime.trim(),
+              game_time: formatGameTime(),
               level: level.trim(),
               tournament: tournament.trim(),
+              description: gameDescription.trim(),
             },
             ...(homeProfile ? { home_profile: homeProfile } : {}),
             ...(awayProfile ? { away_profile: awayProfile } : {}),
@@ -560,7 +603,7 @@
   <div class="bg-surface rounded-xl border border-border w-[36rem] max-h-[85vh] flex flex-col">
     <!-- Header with step indicator -->
     <div class="px-6 pt-5 pb-3 border-b border-border">
-      <h2 class="text-lg font-bold mb-3">New Game</h2>
+      <h2 class="text-lg font-bold mb-3">New Game <HelpLink text={help["game.create"].text} url={help["game.create"].url} /></h2>
       {#if step !== "hooks"}
         <div class="flex gap-1">
           {#each stepOrder as _, i}
@@ -656,7 +699,7 @@
 
           <div>
             <label class="block text-xs font-semibold uppercase tracking-wider text-text-muted mb-1.5" for="ng-sport">
-              Sport
+              Sport <HelpLink text={help["game.sport"].text} url={help["game.sport"].url} />
             </label>
             <select
               id="ng-sport"
@@ -875,6 +918,7 @@
               id="ng-date"
               type="date"
               bind:value={date}
+              min={new Date().toISOString().slice(0, 10)}
               class="w-full px-3 py-2 bg-bg border border-border rounded-lg text-sm text-text focus:outline-none focus:border-secondary"
             />
           </div>
@@ -945,6 +989,21 @@
                 <p class="text-xs text-text-muted mt-1">No tournaments yet. Optional — add one or skip.</p>
               {/if}
             {/if}
+          </div>
+
+          <!-- Game context / description -->
+          <div>
+            <label class="block text-xs font-semibold uppercase tracking-wider text-text-muted mb-1.5" for="game-description">
+              Context <span class="font-normal normal-case tracking-normal">(optional)</span>
+            </label>
+            <textarea
+              id="game-description"
+              bind:value={gameDescription}
+              placeholder="e.g. Tournament Championship Final, Rivalry Game, Senior Night"
+              rows="2"
+              class="w-full px-3 py-2 bg-bg border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-secondary resize-y"
+            ></textarea>
+            <p class="text-xs text-text-muted mt-1">Feeds into AI-generated titles, descriptions, and thumbnails as context.</p>
           </div>
 
           <!-- Venue selector -->
@@ -1019,13 +1078,25 @@
             <label class="block text-xs font-semibold uppercase tracking-wider text-text-muted mb-1" for="ng-time">
               Game Time
             </label>
-            <input
-              id="ng-time"
-              type="text"
-              bind:value={gameTime}
-              placeholder="e.g. 7:00 PM"
-              class="w-full px-3 py-2 bg-bg border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-secondary"
-            />
+            <div class="flex gap-2">
+              <input
+                id="ng-time"
+                type="time"
+                bind:value={gameTime}
+                class="flex-1 px-3 py-2 bg-bg border border-border rounded-lg text-sm text-text focus:outline-none focus:border-secondary"
+              />
+              <select
+                bind:value={gameTimezone}
+                class="px-3 py-2 bg-bg border border-border rounded-lg text-sm text-text focus:outline-none focus:border-secondary"
+              >
+                <option value="America/Chicago">Central</option>
+                <option value="America/New_York">Eastern</option>
+                <option value="America/Denver">Mountain</option>
+                <option value="America/Los_Angeles">Pacific</option>
+                <option value="America/Anchorage">Alaska</option>
+                <option value="Pacific/Honolulu">Hawaii</option>
+              </select>
+            </div>
           </div>
 
           <!-- Summary preview -->

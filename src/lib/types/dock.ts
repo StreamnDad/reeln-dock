@@ -21,14 +21,20 @@ export interface RenderOverrideDefaults {
   scale?: number;
   speed?: number;
   smart?: boolean;
+  anchor_x?: number;
+  anchor_y?: number;
+  pad_color?: string;
+  zoom_frames?: number;
 }
 
 export interface RenderingDefaults {
   iteration_mappings: Record<string, string[]>;
   default_profile: string | null;
   default_plugin_profile: string | null;
+  default_render_mode?: "short" | "apply";
   concat_by_default: boolean;
   overrides?: RenderOverrideDefaults;
+  plugin_field_defaults?: Record<string, unknown>;
 }
 
 export interface DockSettings {

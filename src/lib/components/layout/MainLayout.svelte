@@ -1,6 +1,7 @@
 <script lang="ts">
   import Header from "./Header.svelte";
   import DragGhost from "$lib/components/DragGhost.svelte";
+  import UpdateBanner from "$lib/components/UpdateBanner.svelte";
   import PluginManager from "$lib/components/plugins/PluginManager.svelte";
   import PluginRegistryView from "$lib/components/plugins/PluginRegistryView.svelte";
   import SettingsView from "$lib/components/settings/SettingsView.svelte";
@@ -13,18 +14,22 @@
   import { setGames } from "$lib/stores/games";
   import type { GameSummary } from "$lib/types/game";
   import type { TeamProfile } from "$lib/types/team";
-  import { listGames, setGameTournament, getGameState, getEventTypes } from "$lib/ipc/games";
+  import { listGames, getGameState, getEventTypes } from "$lib/ipc/games";
   import { listTeamLevels, listTeamProfiles } from "$lib/ipc/teams";
   import { moveDrag, endDrag, cancelDrag } from "$lib/stores/drag.svelte";
   import { initJobListener } from "$lib/stores/jobs.svelte";
   import { initQueue } from "$lib/stores/renderQueue.svelte";
+  import { initPluginUI } from "$lib/stores/pluginUI.svelte";
+  import { initLogListener } from "$lib/stores/log.svelte";
+  import { listen } from "@tauri-apps/api/event";
   import { loadTournamentMetadata, isArchived } from "$lib/stores/tournaments.svelte";
   import { loadAllTeams } from "$lib/stores/teams.svelte";
-  import { settingsTeamTarget, settingsTournamentTarget } from "$lib/stores/navigation";
+  import { settingsTeamTarget, settingsTournamentTarget, editingQueueItem } from "$lib/stores/navigation";
   import { log } from "$lib/stores/log.svelte";
-  import { gameStatus, getTournamentGroups, type GameStatus } from "$lib/stores/games";
+  import { gameStatus, getTournamentGroups, type GameStatus, type GameSortOrder } from "$lib/stores/games";
   import { getTournamentMetadata } from "$lib/stores/tournaments.svelte";
   import type { View } from "$lib/stores/navigation";
+  import { useStore } from "$lib/stores/bridge.svelte";
 
   type SidebarTab = "games" | "teams" | "tournaments";
 
@@ -49,6 +54,7 @@
   let search = $state("");
   let showNewGame = $state(false);
   let showEnded = $state(false);
+  let gameSortOrder = $state<GameSortOrder>("date-desc");
 
   // Teams data
   let teamLevels = $state<string[]>([]);
@@ -79,6 +85,14 @@
     setGames(gamesData);
   }
 
+  function handleDeleteGame(dirPath: string) {
+    gamesData = gamesData.filter(g => g.dir_path !== dirPath);
+    setGames(gamesData);
+    selectedGameDir = null;
+    selectedEventId_ = null;
+    expandedClipReview = false;
+  }
+
   // Event navigation for clip review
   function getEventIds(): string[] {
     const game = gamesData.find(g => g.dir_path === selectedGameDir);
@@ -103,8 +117,37 @@
   }
 
   $effect(() => {
+    initLogListener().catch((e) => log.error("Logs", `Failed to init listener: ${e}`));
     initJobListener().catch((e) => log.error("Jobs", `Failed to init listener: ${e}`));
     initQueue().catch((e) => log.error("RenderQueue", `Failed to load queue: ${e}`));
+    initPluginUI().catch((e) => log.error("PluginUI", `Failed to init: ${e}`));
+
+    // Native menu bar navigation
+    listen<string>("menu:navigate", (event) => {
+      const map: Record<string, View> = {
+        nav_games: "games",
+        nav_queue: "queue",
+        nav_plugins: "plugins",
+        nav_registry: "registry",
+        nav_settings: "settings",
+      };
+      const target = map[event.payload];
+      if (target) setView(target);
+    });
+  });
+
+  // React to edit-from-queue navigation requests
+  const getEditRequest = useStore(editingQueueItem);
+  $effect(() => {
+    const req = getEditRequest();
+    if (req) {
+      // Navigate to the game and select the event
+      view = "games";
+      sidebarTab = "games";
+      selectGame(req.gameDir).then(() => {
+        selectedEventId_ = req.eventId;
+      });
+    }
   });
 
   let config = $derived(getConfig());
@@ -142,6 +185,7 @@
 <svelte:window onpointermove={handlePointerMove} onpointerup={handlePointerUp} onkeydown={handleKeyDown} />
 
 <div class="flex flex-col h-screen w-screen">
+  <UpdateBanner />
   <Header currentView={view} {setView} />
 
   <!-- Everything inline, no snippets, no child routing components -->
@@ -151,7 +195,7 @@
       {@const statusCounts = (() => { const c = { all: gamesData.length, new: 0, active: 0, done: 0 }; for (const g of gamesData) { const s = gameStatus(g); if (s in c) c[s]++; } return c; })()}
       {@const tournamentMeta = getTournamentMetadata()}
       {@const archivedNames = new Set(tournamentMeta.filter(m => isArchived(m.name)).map(m => m.name))}
-      {@const groups = getTournamentGroups(gamesData, levelFilter, statusFilter, archivedNames, showEnded)}
+      {@const groups = getTournamentGroups(gamesData, levelFilter, statusFilter, archivedNames, showEnded, gameSortOrder)}
       {@const filteredGroups = groups.map(g => ({ ...g, games: g.games.filter(game => { if (!search) return true; const q = search.toLowerCase(); const info = game.state.game_info; return info.home_team.toLowerCase().includes(q) || info.away_team.toLowerCase().includes(q) || info.date.includes(q) || info.tournament.toLowerCase().includes(q); })})).filter(g => g.games.length > 0)}
       {@const allTournamentNames = [...new Set(gamesData.map(g => g.state.game_info.tournament).filter(Boolean))].sort()}
       <div class="w-72 shrink-0 overflow-y-auto border-r border-border bg-surface flex flex-col">
@@ -203,9 +247,14 @@
             <button class="w-full px-3 py-1.5 bg-primary hover:bg-primary-light text-text rounded-lg text-sm font-medium transition-colors" onclick={() => showNewGame = true}>+ New Game</button>
           </div>
 
-          <!-- Search -->
-          <div class="px-3 pt-1.5 pb-1.5">
-            <input type="text" bind:value={search} placeholder="Search games..." class="w-full px-3 py-1.5 bg-bg border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-secondary" />
+          <!-- Search + Sort -->
+          <div class="px-3 pt-1.5 pb-1.5 flex gap-1.5">
+            <input type="text" bind:value={search} placeholder="Search games..." class="flex-1 px-3 py-1.5 bg-bg border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-secondary" />
+            <button
+              class="px-2 py-1.5 bg-bg border border-border rounded-lg text-xs text-text-muted hover:text-text transition-colors shrink-0"
+              title={gameSortOrder === "date-desc" ? "Newest first — click for oldest first" : "Oldest first — click for newest first"}
+              onclick={() => gameSortOrder = gameSortOrder === "date-desc" ? "date-asc" : "date-desc"}
+            >{gameSortOrder === "date-desc" ? "New" : "Old"}</button>
           </div>
 
           <!-- Game tree -->
@@ -344,6 +393,7 @@
                   onBack={() => { selectedGameDir = null; selectedEventId_ = null; expandedClipReview = false; }}
                   onSelectEvent={(id) => { selectedEventId_ = id; }}
                   onUpdateGame={handleUpdateGame}
+                  onDeleteGame={handleDeleteGame}
                 />
               </div>
               {#if selectedEvent}
@@ -375,7 +425,7 @@
         {:else}
           {@const tournamentMeta2 = getTournamentMetadata()}
           {@const archivedNames2 = new Set(tournamentMeta2.filter(m => isArchived(m.name)).map(m => m.name))}
-          {@const contentGroups = getTournamentGroups(gamesData, levelFilter, statusFilter, archivedNames2, showEnded)}
+          {@const contentGroups = getTournamentGroups(gamesData, levelFilter, statusFilter, archivedNames2, showEnded, gameSortOrder)}
           {#each contentGroups as group}
             <div class="mb-6">
               <h3 class="text-sm font-semibold uppercase tracking-wider text-text-muted mb-3">{group.tournament} <span class="text-xs ml-1">{group.games.length} game{group.games.length !== 1 ? "s" : ""}</span></h3>

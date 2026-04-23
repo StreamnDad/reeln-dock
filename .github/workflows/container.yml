@@ -1,0 +1,34 @@
+name: Build CI container
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/tauri-ci.Dockerfile"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: Build and push CI image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .github
+          file: .github/tauri-ci.Dockerfile
+          push: true
+          tags: |
+            ghcr.io/streamndad/tauri-ci:22.04
+            ghcr.io/streamndad/tauri-ci:latest

@@ -18,10 +18,7 @@ pub struct ProgressReporter {
 
 impl ProgressReporter {
     pub fn new(app_handle: AppHandle, job_id: String) -> Self {
-        Self {
-            app_handle,
-            job_id,
-        }
+        Self { app_handle, job_id }
     }
 
     pub fn report(&self, phase: &str, progress: f64, message: &str) {

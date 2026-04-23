@@ -88,12 +88,22 @@ export function gameStatus(game: GameSummary): "new" | "active" | "done" {
   return "new";
 }
 
+export type GameSortOrder = "date-desc" | "date-asc";
+
+function compareGamesByDate(a: GameSummary, b: GameSummary, order: GameSortOrder): number {
+  const dateA = a.state.game_info.date || a.state.created_at || "";
+  const dateB = b.state.game_info.date || b.state.created_at || "";
+  const cmp = dateA.localeCompare(dateB);
+  return order === "date-asc" ? cmp : -cmp;
+}
+
 export function getTournamentGroups(
   allGames: GameSummary[],
   level: string | null,
   status: GameStatus,
   archivedNames?: Set<string>,
   showArchived?: boolean,
+  sortOrder: GameSortOrder = "date-desc",
 ): TournamentGroup[] {
   let filtered = level
     ? allGames.filter((g) => g.state.game_info.level === level)
@@ -107,12 +117,26 @@ export function getTournamentGroups(
   for (const game of filtered) {
     const tournament = game.state.game_info.tournament || "Ungrouped";
     if (archivedNames && !showArchived && archivedNames.has(tournament)) continue;
+    // Done games without a tournament are "finished" from the user's POV;
+    // treat them like ended tournaments and hide them behind the +ended toggle.
+    // Exception: if the user explicitly filters by "done", still show them.
+    if (
+      tournament === "Ungrouped" &&
+      !showArchived &&
+      status !== "done" &&
+      gameStatus(game) === "done"
+    ) {
+      continue;
+    }
     const list = grouped.get(tournament) ?? [];
     list.push(game);
     grouped.set(tournament, list);
   }
   return Array.from(grouped.entries())
-    .map(([tournament, gameList]) => ({ tournament, games: gameList }))
+    .map(([tournament, gameList]) => ({
+      tournament,
+      games: [...gameList].sort((a, b) => compareGamesByDate(a, b, sortOrder)),
+    }))
     .sort((a, b) => a.tournament.localeCompare(b.tournament));
 }
 

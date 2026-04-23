@@ -9,7 +9,7 @@ description = "Cross-platform desktop app for the reeln ecosystem"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset"] }
+tauri = { version = "2", features = ["protocol-asset", "image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
@@ -24,6 +24,10 @@ reeln-plugin = { path = "../../reeln-core/crates/reeln-plugin" }
 tokio = { version = "1", features = ["rt", "sync"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
+open = "5"
+ureq = { version = "2", features = ["json"] }
+semver = "1"
 
 [dev-dependencies]
 tempfile = "3"
+filetime = "0.2"

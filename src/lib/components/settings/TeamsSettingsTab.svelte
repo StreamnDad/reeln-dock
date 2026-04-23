@@ -11,6 +11,8 @@
   import { settingsTeamTarget } from "$lib/stores/navigation";
   import { useStore } from "$lib/stores/bridge.svelte";
   import TeamDetailView from "$lib/components/content/TeamDetailView.svelte";
+  import { help } from "$lib/help";
+  import HelpLink from "$lib/components/HelpLink.svelte";
   import TeamLogo from "$lib/components/TeamLogo.svelte";
 
   let levels = $state<string[]>([]);
@@ -225,7 +227,8 @@
     <!-- Level filter -->
     {#if levels.length > 1}
       <div class="px-3 pt-2 pb-1 border-b border-border">
-        <div class="flex flex-wrap gap-1.5">
+        <div class="flex flex-wrap gap-1.5 items-center">
+          <HelpLink text={help["teams.levels"].text} url={help["teams.levels"].url} />
           <button
             class="px-2.5 py-1 rounded-md text-xs font-medium transition-colors {levelFilter === null ? 'bg-primary text-text' : 'bg-bg text-text-muted hover:text-text hover:bg-surface-hover'}"
             onclick={() => (levelFilter = null)}
@@ -317,7 +320,7 @@
   <!-- Right panel: Detail or Create -->
   <div class="flex-1 overflow-y-auto px-6 py-4">
     {#if creatingNew}
-      <h3 class="text-lg font-bold mb-4">New Team</h3>
+      <h3 class="text-lg font-bold mb-4">New Team <HelpLink text={help["teams.rosters"].text} url={help["teams.rosters"].url} /></h3>
       <div class="bg-surface rounded-lg border border-border p-4 space-y-4 max-w-lg">
         <div>
           <label class="block text-sm text-text-muted mb-1" for="new-team-name">Team Name</label>

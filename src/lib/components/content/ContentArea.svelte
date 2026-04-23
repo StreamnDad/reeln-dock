@@ -17,9 +17,6 @@
     sidebarMode: SidebarMode;
     selectedTeamKey: string | null;
     selectedTournamentName: string | null;
-    setTeamKey: (k: string | null) => void;
-    setTournamentName: (n: string | null) => void;
-    setSidebarMode: (m: SidebarMode) => void;
   }
 
   let {
@@ -27,9 +24,6 @@
     sidebarMode,
     selectedTeamKey,
     selectedTournamentName,
-    setTeamKey,
-    setTournamentName,
-    setSidebarMode,
   }: Props = $props();
 
   const getGame = useStore(selectedGame);

@@ -58,8 +58,8 @@ pub fn execute_hook(
     shared: &serde_json::Value,
     config_path: Option<&str>,
 ) -> Result<HookExecutionResult, String> {
-    let context_json =
-        serde_json::to_string(context_data).map_err(|e| format!("Failed to serialize context: {}", e))?;
+    let context_json = serde_json::to_string(context_data)
+        .map_err(|e| format!("Failed to serialize context: {}", e))?;
 
     let shared_json =
         serde_json::to_string(shared).map_err(|e| format!("Failed to serialize shared: {}", e))?;
@@ -72,7 +72,7 @@ pub fn execute_hook(
         .arg(&context_json);
 
     // Only pass shared if non-empty
-    if shared.is_object() && !shared.as_object().map_or(true, |m| m.is_empty()) {
+    if shared.is_object() && !shared.as_object().is_none_or(|m| m.is_empty()) {
         cmd.arg("--shared-json").arg(&shared_json);
     }
 
@@ -80,7 +80,9 @@ pub fn execute_hook(
         cmd.arg("--config").arg(path);
     }
 
-    let output = cmd.output().map_err(|e| format!("Failed to execute reeln CLI: {}", e))?;
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to execute reeln CLI: {}", e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -95,20 +97,29 @@ pub fn execute_hook(
         ));
     }
 
-    serde_json::from_str::<HookExecutionResult>(trimmed).map_err(|e| {
+    let mut result = serde_json::from_str::<HookExecutionResult>(trimmed).map_err(|e| {
         format!(
             "Failed to parse CLI output: {}. Output: {}. Stderr: {}",
             e,
             &trimmed[..trimmed.len().min(500)],
             stderr.trim()
         )
-    })
+    })?;
+
+    // Capture stderr warnings (e.g., config validation) into logs
+    for line in stderr.lines() {
+        let trimmed_line = line.trim();
+        if !trimmed_line.is_empty() {
+            result.logs.push(trimmed_line.to_string());
+        }
+    }
+
+    Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     // -----------------------------------------------------------------------
     // HookExecutionResult serde
@@ -201,29 +212,29 @@ mod tests {
     // execute_hook — helper to create a script that outputs given text
     // -----------------------------------------------------------------------
 
+    #[cfg(unix)]
     fn make_script(dir: &std::path::Path, stdout_text: &str) -> std::path::PathBuf {
         let script = dir.join("fake_reeln.sh");
-        let mut f = std::fs::File::create(&script).unwrap();
-        writeln!(f, "#!/bin/sh").unwrap();
-        writeln!(f, "echo '{}'", stdout_text).unwrap();
+        std::fs::write(&script, format!("#!/bin/sh\necho '{}'\n", stdout_text)).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        std::thread::sleep(std::time::Duration::from_millis(10));
         script
     }
 
+    #[cfg(unix)]
     fn make_failing_script(dir: &std::path::Path) -> std::path::PathBuf {
         let script = dir.join("fail_reeln.sh");
-        let mut f = std::fs::File::create(&script).unwrap();
-        writeln!(f, "#!/bin/sh").unwrap();
-        writeln!(f, "exit 1").unwrap();
+        std::fs::write(&script, "#!/bin/sh\nexit 1\n").unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        std::thread::sleep(std::time::Duration::from_millis(10));
         script
     }
 
@@ -231,10 +242,12 @@ mod tests {
     // execute_hook
     // -----------------------------------------------------------------------
 
+    #[cfg(unix)]
     #[test]
     fn test_execute_hook_success() {
         let dir = tempfile::tempdir().unwrap();
-        let json_out = r#"{"success":true,"hook":"on_game_init","shared":{"k":"v"},"logs":[],"errors":[]}"#;
+        let json_out =
+            r#"{"success":true,"hook":"on_game_init","shared":{"k":"v"},"logs":[],"errors":[]}"#;
         let script = make_script(dir.path(), json_out);
 
         let result = execute_hook(
@@ -251,6 +264,7 @@ mod tests {
         assert_eq!(result.shared["k"], "v");
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_execute_hook_with_shared() {
         let dir = tempfile::tempdir().unwrap();
@@ -270,10 +284,12 @@ mod tests {
         assert_eq!(result.shared["inherited"], "yes");
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_execute_hook_with_config_path() {
         let dir = tempfile::tempdir().unwrap();
-        let json_out = r#"{"success":true,"hook":"on_game_init","shared":{},"logs":[],"errors":[]}"#;
+        let json_out =
+            r#"{"success":true,"hook":"on_game_init","shared":{},"logs":[],"errors":[]}"#;
         let script = make_script(dir.path(), json_out);
 
         let result = execute_hook(
@@ -288,6 +304,7 @@ mod tests {
         assert!(result.success);
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_execute_hook_empty_output() {
         let dir = tempfile::tempdir().unwrap();
@@ -305,6 +322,7 @@ mod tests {
         assert!(result.unwrap_err().contains("no output"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_execute_hook_invalid_json() {
         let dir = tempfile::tempdir().unwrap();
@@ -336,12 +354,14 @@ mod tests {
         assert!(result.unwrap_err().contains("Failed to execute"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_execute_hook_empty_shared_not_passed() {
         // When shared is an empty object, the --shared-json flag should be skipped.
         // We verify this indirectly: the script still succeeds because it ignores args.
         let dir = tempfile::tempdir().unwrap();
-        let json_out = r#"{"success":true,"hook":"on_game_init","shared":{},"logs":[],"errors":[]}"#;
+        let json_out =
+            r#"{"success":true,"hook":"on_game_init","shared":{},"logs":[],"errors":[]}"#;
         let script = make_script(dir.path(), json_out);
 
         let result = execute_hook(
@@ -356,11 +376,13 @@ mod tests {
         assert!(result.success);
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_execute_hook_null_shared_not_passed() {
         // When shared is not an object (e.g. null), the --shared-json flag should be skipped.
         let dir = tempfile::tempdir().unwrap();
-        let json_out = r#"{"success":true,"hook":"on_game_init","shared":{},"logs":[],"errors":[]}"#;
+        let json_out =
+            r#"{"success":true,"hook":"on_game_init","shared":{},"logs":[],"errors":[]}"#;
         let script = make_script(dir.path(), json_out);
 
         let result = execute_hook(
@@ -375,6 +397,75 @@ mod tests {
         assert!(result.success);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn test_execute_hook_stderr_captured_as_logs() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("stderr_reeln.sh");
+        let json_out = r#"{"success":true,"hook":"on_game_init","shared":{},"logs":["from_stdout"],"errors":[]}"#;
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\necho '{}'\necho 'warning: config deprecated' >&2\necho 'notice: upgrade available' >&2\n",
+                json_out
+            ),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let result = execute_hook(
+            script.to_str().unwrap(),
+            "on_game_init",
+            &serde_json::json!({}),
+            &serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+
+        assert!(result.success);
+        // Original stdout log preserved
+        assert!(result.logs.contains(&"from_stdout".to_string()));
+        // stderr lines appended to logs
+        assert!(
+            result
+                .logs
+                .contains(&"warning: config deprecated".to_string())
+        );
+        assert!(
+            result
+                .logs
+                .contains(&"notice: upgrade available".to_string())
+        );
+        assert_eq!(result.logs.len(), 3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_execute_hook_empty_stderr_not_added() {
+        let dir = tempfile::tempdir().unwrap();
+        let json_out =
+            r#"{"success":true,"hook":"on_game_init","shared":{},"logs":[],"errors":[]}"#;
+        let script = make_script(dir.path(), json_out);
+
+        let result = execute_hook(
+            script.to_str().unwrap(),
+            "on_game_init",
+            &serde_json::json!({}),
+            &serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+
+        // No stderr → no extra log entries
+        assert!(result.logs.is_empty());
+    }
+
+    #[cfg(unix)]
     #[test]
     fn test_execute_hook_error_response() {
         let dir = tempfile::tempdir().unwrap();

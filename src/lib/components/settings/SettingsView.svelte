@@ -8,15 +8,22 @@
   import type { DockSettings } from "$lib/types/dock";
   import type { EventTypeEntry } from "$lib/types/config";
   import LogViewer from "./LogViewer.svelte";
+  import { getShowHelpTips, setShowHelpTips } from "$lib/stores/uiPrefs.svelte";
   import TeamsSettingsTab from "./TeamsSettingsTab.svelte";
   import TournamentsSettingsTab from "./TournamentsSettingsTab.svelte";
   import RenderingSettingsTab from "./RenderingSettingsTab.svelte";
+  import ProfilesSettingsTab from "./ProfilesSettingsTab.svelte";
   import { settingsTeamTarget, settingsTournamentTarget } from "$lib/stores/navigation";
   import { useStore } from "$lib/stores/bridge.svelte";
+  import { help } from "$lib/help";
+  import HelpLink from "$lib/components/HelpLink.svelte";
+  import { getCliStatus, refreshCliStatus } from "$lib/stores/cli.svelte";
+  import { getProxyCacheStats, clearProxyCache } from "$lib/ipc/media";
+  import type { ProxyCacheStats } from "$lib/ipc/media";
 
   let config = $derived(getConfig());
   let dockSettings = $derived(getDockSettings());
-  let activeTab = $state<"dock" | "teams" | "tournaments" | "event-types" | "rendering" | "config" | "logs">("dock");
+  let activeTab = $state<"dock" | "teams" | "tournaments" | "event-types" | "rendering" | "profiles" | "config" | "logs">("dock");
 
   const getTeamTarget = useStore(settingsTeamTarget);
   const getTournamentTarget = useStore(settingsTournamentTarget);
@@ -113,6 +120,35 @@
   let message = $state("");
   let showLogos = $state(true);
 
+  // Proxy cache
+  let cacheStats = $state<ProxyCacheStats | null>(null);
+  let cacheClearing = $state(false);
+
+  async function loadCacheStats() {
+    try {
+      cacheStats = await getProxyCacheStats();
+    } catch {
+      cacheStats = null;
+    }
+  }
+
+  function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
+
+  async function handleClearCache() {
+    cacheClearing = true;
+    try {
+      await clearProxyCache();
+      await loadCacheStats();
+    } finally {
+      cacheClearing = false;
+    }
+  }
+
   $effect(() => {
     showLogos = dockSettings.display?.show_logos ?? true;
   });
@@ -199,6 +235,15 @@
     </button>
     <button
       class="px-3 py-1.5 text-sm rounded transition-colors"
+      class:bg-primary={activeTab === "profiles"}
+      class:text-text-muted={activeTab !== "profiles"}
+      class:hover:text-text={activeTab !== "profiles"}
+      onclick={() => (activeTab = "profiles")}
+    >
+      Profiles
+    </button>
+    <button
+      class="px-3 py-1.5 text-sm rounded transition-colors"
       class:bg-primary={activeTab === "config"}
       class:text-text-muted={activeTab !== "config"}
       class:hover:text-text={activeTab !== "config"}
@@ -230,10 +275,13 @@
   {:else if activeTab === "rendering"}
     <RenderingSettingsTab />
 
+  {:else if activeTab === "profiles"}
+    <ProfilesSettingsTab />
+
   {:else if activeTab === "dock"}
     <div class="bg-surface rounded-lg border border-border p-4 space-y-4">
       <div>
-        <label class="block text-sm text-text-muted mb-1" for="config-path">Config File Path</label>
+        <label class="block text-sm text-text-muted mb-1" for="config-path">Config File Path <HelpLink text={help["config.file_locations"].text} url={help["config.file_locations"].url} /></label>
         <div class="flex gap-2">
           <input
             id="config-path"
@@ -271,7 +319,87 @@
             <p class="text-xs text-text-muted">Display team logos on game tiles in sidebar and tournament views.</p>
           </div>
         </label>
+        <label class="flex items-center gap-3 cursor-pointer mt-3" for="show-help-tips">
+          <input
+            id="show-help-tips"
+            type="checkbox"
+            checked={getShowHelpTips()}
+            onchange={(e) => setShowHelpTips((e.target as HTMLInputElement).checked)}
+            class="rounded"
+          />
+          <div>
+            <span class="text-sm text-text">Show help tooltips</span>
+            <p class="text-xs text-text-muted">Display "?" help icons next to settings with links to documentation.</p>
+          </div>
+        </label>
       </div>
+
+      <!-- CLI Status -->
+      {#if true}
+      {@const cliStatus = getCliStatus()}
+      <div class="border-t border-border pt-4">
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">reeln CLI</h3>
+        <div class="space-y-2">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full {cliStatus.available ? 'bg-green-500' : 'bg-red-500'}"></span>
+            <span class="text-sm">{cliStatus.available ? `reeln ${cliStatus.version}` : "Not found"}</span>
+            <button
+              class="ml-auto px-2 py-0.5 text-xs text-text-muted hover:text-text bg-bg border border-border rounded transition-colors"
+              onclick={() => refreshCliStatus()}
+            >Detect</button>
+          </div>
+          {#if cliStatus.available}
+            <div class="text-xs text-text-muted truncate" title={cliStatus.path ?? ""}>
+              {cliStatus.path}
+            </div>
+            {#if cliStatus.plugins.length > 0}
+              <div class="flex flex-wrap gap-1.5 mt-1">
+                {#each cliStatus.plugins as plugin}
+                  <span class="px-1.5 py-0.5 bg-bg rounded text-[10px] text-text-muted">{plugin.name} {plugin.version}</span>
+                {/each}
+              </div>
+            {:else}
+              <p class="text-xs text-text-muted">No plugins installed.</p>
+            {/if}
+          {:else}
+            <p class="text-xs text-text-muted">
+              Install with: <code class="bg-bg px-1 py-0.5 rounded">uv pip install reeln</code>
+            </p>
+            <p class="text-xs text-text-muted">Plugin features (overlays, smart zoom, uploads) require the CLI.</p>
+          {/if}
+        </div>
+      </div>
+      {/if}
+
+      <!-- Preview Cache -->
+      {#await loadCacheStats() then}
+      <div class="border-t border-border pt-4">
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">Preview Cache</h3>
+        <p class="text-xs text-text-muted mb-2">
+          Video proxies are generated for MKV and other non-web formats to enable in-app preview.
+          Old proxies are automatically cleaned up after 7 days.
+        </p>
+        {#if cacheStats}
+          <div class="flex items-center gap-4">
+            <span class="text-sm">
+              {cacheStats.file_count} {cacheStats.file_count === 1 ? "file" : "files"}
+              <span class="text-text-muted">({formatBytes(cacheStats.total_bytes)})</span>
+            </span>
+            {#if cacheStats.file_count > 0}
+              <button
+                class="px-2.5 py-1 text-xs font-medium border border-border text-text-muted hover:text-accent hover:border-accent/50 rounded transition-colors disabled:opacity-50"
+                disabled={cacheClearing}
+                onclick={handleClearCache}
+              >
+                {cacheClearing ? "Clearing..." : "Clear Cache"}
+              </button>
+            {/if}
+          </div>
+        {:else}
+          <span class="text-sm text-text-muted">No cache data</span>
+        {/if}
+      </div>
+      {/await}
     </div>
 
   {:else if activeTab === "event-types"}
@@ -346,6 +474,10 @@
 
   {:else if activeTab === "config" && config}
     <div class="bg-surface rounded-lg border border-border p-4 space-y-4 text-sm">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-xs font-semibold uppercase tracking-wider text-text-muted">reeln Config</span>
+        <HelpLink text={help["config.doctor"].text} url={help["config.doctor"].url} />
+      </div>
       <div class="grid grid-cols-2 gap-4">
         <div>
           <span class="text-text-muted block">Sport</span>
@@ -404,13 +536,13 @@
       <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted pt-2">Plugins</h3>
       <div>
         <span class="text-text-muted block">Enabled</span>
-        <span>{config.plugins.enabled.join(", ") || "none"}</span>
+        <span>{(config.plugins?.enabled ?? []).join(", ") || "none"}</span>
       </div>
 
-      {#if Object.keys(config.render_profiles).length > 0}
+      {#if Object.keys(config.render_profiles ?? {}).length > 0}
         <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted pt-2">Render Profiles</h3>
         <div>
-          {#each Object.keys(config.render_profiles) as name}
+          {#each Object.keys(config.render_profiles ?? {}) as name}
             <span class="inline-block px-2 py-0.5 rounded bg-bg text-text-muted text-xs mr-1 mb-1">{name}</span>
           {/each}
         </div>

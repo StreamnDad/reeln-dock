@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ConfigProfile,
   PluginDetail,
+  PluginAuthReport,
   RegistryPlugin,
   VersionInfo,
 } from "$lib/types/plugin";
@@ -74,6 +75,17 @@ export async function getVersionInfo(): Promise<VersionInfo> {
   return invoke<VersionInfo>("get_version_info");
 }
 
+export interface PluginInstallResult {
+  success: boolean;
+  output: string;
+}
+
+export async function installPluginViaCli(
+  pluginName: string,
+): Promise<PluginInstallResult> {
+  return invoke<PluginInstallResult>("install_plugin_via_cli", { pluginName });
+}
+
 export async function getEnforceHooks(
   profilePath: string,
 ): Promise<boolean> {
@@ -85,4 +97,28 @@ export async function setEnforceHooks(
   enforce: boolean,
 ): Promise<boolean> {
   return invoke<boolean>("set_enforce_hooks", { profilePath, enforce });
+}
+
+export async function checkPluginAuth(
+  pluginName?: string,
+  configPath?: string,
+): Promise<PluginAuthReport[]> {
+  return invoke<PluginAuthReport[]>("check_plugin_auth", {
+    pluginName: pluginName ?? null,
+    configPath: configPath ?? null,
+  });
+}
+
+export async function refreshPluginAuth(
+  pluginName: string,
+  configPath?: string,
+): Promise<PluginAuthReport[]> {
+  return invoke<PluginAuthReport[]>("refresh_plugin_auth", {
+    pluginName,
+    configPath: configPath ?? null,
+  });
+}
+
+export async function cancelPluginAuth(): Promise<void> {
+  return invoke<void>("cancel_plugin_auth");
 }

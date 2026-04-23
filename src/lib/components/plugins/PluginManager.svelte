@@ -12,12 +12,18 @@
     loadRegistry,
     loadVersionInfo,
     getVersionInfo_,
+    getAuthMap,
     selectProfile,
     addPlugin,
     removePlugin,
     createProfile,
+    refreshAuth,
+    cancelAuth,
   } from "$lib/stores/plugins.svelte";
   import { getEnforceHooks, setEnforceHooks } from "$lib/ipc/plugins";
+  import { isPluginInstalled, isCliAvailable } from "$lib/stores/cli.svelte";
+  import { help } from "$lib/help";
+  import HelpLink from "$lib/components/HelpLink.svelte";
   import PluginCard from "./PluginCard.svelte";
 
   let profiles = $derived(getProfiles());
@@ -28,6 +34,7 @@
   let regLoading = $derived(isRegistryLoading());
   let regError = $derived(getRegistryError());
   let version = $derived(getVersionInfo_());
+  let authMap = $derived(getAuthMap());
 
   // Enforce hooks toggle
   let enforceHooks = $state(true);
@@ -61,9 +68,15 @@
 
   interface UnifiedPlugin {
     name: string;
-    status: "enabled" | "disabled" | "available";
+    status: "enabled" | "enabled_not_installed" | "disabled" | "available";
     detail?: PluginDetail;
     registryInfo?: RegistryPlugin;
+  }
+
+  function resolveEnabledStatus(name: string): "enabled" | "enabled_not_installed" {
+    // When CLI is unavailable, degrade gracefully — show as enabled
+    if (!isCliAvailable()) return "enabled";
+    return isPluginInstalled(name) ? "enabled" : "enabled_not_installed";
   }
 
   let unifiedPlugins = $derived.by(() => {
@@ -71,25 +84,32 @@
     const seen = new Set<string>();
     const result: UnifiedPlugin[] = [];
 
+    const cliUp = isCliAvailable();
+
     for (const rp of registryPlugins) {
       seen.add(rp.name);
       const detail = configuredMap.get(rp.name);
+      if (!detail) continue; // "available" plugins belong on the Registry page
+      const installed = !cliUp || isPluginInstalled(rp.name);
+      // Hide disabled plugins that aren't installed — Registry page handles those
+      if (!detail.enabled && !installed) continue;
       result.push({
         name: rp.name,
-        status: detail ? (detail.enabled ? "enabled" : "disabled") : "available",
+        status: detail.enabled ? resolveEnabledStatus(rp.name) : "disabled",
         detail,
         registryInfo: rp,
       });
     }
 
     for (const p of configuredPlugins) {
-      if (!seen.has(p.name)) {
-        result.push({
-          name: p.name,
-          status: p.enabled ? "enabled" : "disabled",
-          detail: p,
-        });
-      }
+      if (seen.has(p.name)) continue;
+      const installed = !cliUp || isPluginInstalled(p.name);
+      if (!p.enabled && !installed) continue;
+      result.push({
+        name: p.name,
+        status: p.enabled ? resolveEnabledStatus(p.name) : "disabled",
+        detail: p,
+      });
     }
 
     return result;
@@ -129,7 +149,7 @@
 <div>
   <!-- Header with version -->
   <div class="flex items-center justify-between mb-4">
-    <h2 class="text-lg font-bold">Plugins</h2>
+    <h2 class="text-lg font-bold">Plugins <HelpLink text={help["plugins.manage"].text} url={help["plugins.manage"].url} /></h2>
     {#if version}
       <div class="flex items-center gap-3 text-xs text-text-muted">
         <span>dock v{version.app_version}</span>
@@ -143,7 +163,7 @@
   <!-- Config Profile Selector -->
   <div class="mb-4">
     <label class="block text-xs font-semibold uppercase tracking-wider text-text-muted mb-1.5" for="profile-select">
-      Config Profile
+      Config Profile <HelpLink text={help["plugins.auth"].text} url={help["plugins.auth"].url} />
     </label>
     <div class="flex flex-wrap items-center gap-2">
       {#each profiles as profile (profile.path)}
@@ -211,7 +231,7 @@
   {#if selectedPath}
     <div class="mb-4 flex items-center justify-between px-3 py-2.5 bg-bg rounded-lg border border-border">
       <div>
-        <span class="text-sm font-medium">Enforce Hook Registry</span>
+        <span class="text-sm font-medium">Enforce Hook Registry <HelpLink text={help["plugins.enforce_hooks"].text} url={help["plugins.enforce_hooks"].url} /></span>
         <p class="text-xs text-text-muted mt-0.5">
           When enabled, plugins can only register hooks declared in the registry.
           Disable to allow all hooks.
@@ -261,8 +281,11 @@
           status={up.status}
           detail={up.detail}
           registryInfo={up.registryInfo}
+          authResults={authMap.get(`${selectedPath}::${up.name}`) ?? []}
           onAdd={() => handleAddPlugin(up.name)}
           onRemove={() => handleRemovePlugin(up.name)}
+          onRefreshAuth={() => refreshAuth(up.name)}
+          onCancelAuth={() => cancelAuth()}
         />
       {/each}
     </div>

@@ -1,0 +1,221 @@
+name: Release
+
+on:
+  push:
+    tags: [v*]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Quality gates ──────────────────────────────────────────────────
+  checks:
+    name: Quality Gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: reeln-dock
+
+      - uses: actions/checkout@v4
+        with:
+          repository: StreamnDad/reeln-core
+          path: reeln-core
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: reeln-dock/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: reeln-dock/src-tauri
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            libavcodec-dev libavformat-dev libavfilter-dev libavdevice-dev \
+            libavutil-dev libswscale-dev libswresample-dev pkg-config
+
+      - name: Frontend checks
+        working-directory: reeln-dock
+        run: |
+          npm ci
+          npm run check
+          npm run test
+
+      - name: Rust checks
+        working-directory: reeln-dock/src-tauri
+        run: |
+          cargo fmt --all --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+
+  # ── Multi-platform builds ──────────────────────────────────────────
+  build:
+    name: Build (${{ matrix.label }})
+    needs: checks
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS (universal)
+            platform: macos-latest
+            args: --target universal-apple-darwin
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+          - label: Linux
+            platform: ubuntu-22.04
+            args: ""
+            rust_targets: ""
+          - label: Windows
+            platform: windows-latest
+            args: ""
+            rust_targets: ""
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: reeln-dock
+
+      - uses: actions/checkout@v4
+        with:
+          repository: StreamnDad/reeln-core
+          path: reeln-core
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: reeln-dock/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: reeln-dock/src-tauri
+
+      # ── System dependencies ──────────────────────────────────────
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            libavcodec-dev libavformat-dev libavfilter-dev libavdevice-dev \
+            libavutil-dev libswscale-dev libswresample-dev pkg-config
+
+      - name: Install system dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg pkg-config
+
+      - name: Cache FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        id: ffmpeg-cache
+        with:
+          path: ffmpeg
+          key: ffmpeg-win64-shared-7.1
+
+      - name: Install FFmpeg (Windows)
+        if: runner.os == 'Windows' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          curl -sL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-win64-gpl-shared-7.1.zip" -o ffmpeg.zip
+          7z x ffmpeg.zip
+          mv ffmpeg-n7.1-latest-win64-gpl-shared-7.1 ffmpeg
+
+      - name: Set FFmpeg env (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          echo "FFMPEG_DIR=${GITHUB_WORKSPACE}/ffmpeg" >> $GITHUB_ENV
+          echo "${GITHUB_WORKSPACE}/ffmpeg/bin" >> $GITHUB_PATH
+
+      # ── Build ────────────────────────────────────────────────────
+      - name: Install frontend dependencies
+        working-directory: reeln-dock
+        run: npm ci
+
+      - name: Build and release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS code signing (optional — set these secrets to enable)
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: reeln-dock
+          tagName: v__VERSION__
+          releaseName: "reeln-dock v__VERSION__"
+          releaseBody: |
+            See assets below to download and install.
+
+            ## Checksums
+            SHA-256 checksums are in `SHA256SUMS.txt`.
+
+            ## Install
+            | Platform | File |
+            |----------|------|
+            | macOS (Intel + Apple Silicon) | `.dmg` |
+            | Linux (Debian/Ubuntu) | `.deb` |
+            | Linux (all distros) | `.AppImage` |
+            | Windows | `.msi` or `.exe` |
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+  # ── Checksums ──────────────────────────────────────────────────────
+  checksums:
+    name: Checksums
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          gh release download "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir artifacts \
+            --pattern "*.dmg" \
+            --pattern "*.deb" \
+            --pattern "*.AppImage" \
+            --pattern "*.msi" \
+            --pattern "*.exe" \
+            --pattern "*.tar.gz" \
+            --pattern "*.sig"
+
+      - name: Generate SHA-256 checksums
+        run: |
+          cd artifacts
+          sha256sum * | sort -k2 > SHA256SUMS.txt
+          echo "## SHA-256 Checksums"
+          cat SHA256SUMS.txt
+
+      - name: Upload checksums to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          gh release upload "$tag" \
+            artifacts/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber

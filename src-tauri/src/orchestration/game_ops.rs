@@ -3,8 +3,10 @@ use std::sync::Arc;
 
 use reeln_config::AppConfig;
 use reeln_media::{ConcatOptions, MediaBackend};
-use reeln_sport::{SportRegistry, segment_dir_name, make_segments};
+use reeln_sport::{SportRegistry, make_segments, segment_dir_name};
 use reeln_state::{GameInfo, GameState};
+
+use crate::commands::teams::slugify;
 
 use super::progress::ProgressReporter;
 
@@ -19,6 +21,7 @@ pub struct InitGameParams {
     pub level: Option<String>,
     pub tournament: Option<String>,
     pub period_length: Option<u32>,
+    pub description: Option<String>,
 }
 
 /// Initialize a new game: create directory, segment subdirs, and game.json.
@@ -58,11 +61,14 @@ pub fn init_game(
         venue: params.venue.unwrap_or_default(),
         game_time: params.game_time.unwrap_or_default(),
         period_length,
-        description: String::new(),
+        description: params.description.unwrap_or_default(),
         thumbnail: String::new(),
         level: params.level.unwrap_or_default(),
-        home_slug: params.home_team.to_lowercase().replace(' ', "-"),
-        away_slug: params.away_team.to_lowercase().replace(' ', "-"),
+        // CLI parity: must match `reeln.core.teams.slugify` so the CLI can
+        // resolve team profiles at `{level}/{slug}.json`. Previously this
+        // used hyphens which broke roster/logo lookup during render.
+        home_slug: slugify(&params.home_team),
+        away_slug: slugify(&params.away_team),
         tournament: params.tournament.unwrap_or_default(),
     };
 
@@ -118,18 +124,14 @@ pub fn process_segment(
     }
 
     // Optionally collect replays from source_dir
-    if let Some(ref source_dir) = config.paths.source_dir {
-        if source_dir.exists() {
-            let _ = reeln_state::collect_replays(
-                source_dir,
-                &config.paths.source_glob,
-                &seg_dir,
-            );
-        }
+    if let Some(ref source_dir) = config.paths.source_dir
+        && source_dir.exists()
+    {
+        let _ = reeln_state::collect_replays(source_dir, &config.paths.source_glob, &seg_dir);
     }
 
-    let videos = reeln_state::find_segment_videos(&seg_dir, &seg_alias)
-        .map_err(|e| e.to_string())?;
+    let videos =
+        reeln_state::find_segment_videos(&seg_dir, &seg_alias).map_err(|e| e.to_string())?;
 
     if videos.is_empty() {
         return Err(format!("No videos found in {}", seg_dir.display()));
@@ -148,22 +150,22 @@ pub fn process_segment(
             .unwrap_or_else(|_| video.display().to_string());
 
         if !existing_clips.contains(&rel_path) {
-            state.events.push(reeln_state::GameEvent {
-                id: uuid::Uuid::new_v4().to_string(),
-                clip: rel_path,
-                segment_number,
-                event_type: String::new(),
-                player: String::new(),
-                created_at: now.clone(),
-                metadata: std::collections::HashMap::new(),
-            });
+            reeln_state::add_event(
+                &mut state,
+                reeln_state::GameEvent {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    clip: rel_path,
+                    segment_number,
+                    event_type: String::new(),
+                    player: String::new(),
+                    created_at: now.clone(),
+                    metadata: std::collections::HashMap::new(),
+                },
+            );
         }
     }
 
-    if !state.segments_processed.contains(&segment_number) {
-        state.segments_processed.push(segment_number);
-        state.segments_processed.sort();
-    }
+    reeln_state::mark_segment_processed(&mut state, segment_number);
 
     reeln_state::save_game_state(&state, game_dir).map_err(|e| e.to_string())?;
 
@@ -191,9 +193,7 @@ pub fn process_segment(
         .concat(&segment_paths, &output, &opts)
         .map_err(|e| e.to_string())?;
 
-    state
-        .segment_outputs
-        .push(output.display().to_string());
+    reeln_state::set_segment_output(&mut state, output.display().to_string());
 
     reeln_state::save_game_state(&state, game_dir).map_err(|e| e.to_string())?;
 
@@ -229,11 +229,7 @@ pub fn merge_highlights(
     }
 
     let highlights_output = game_dir.join("highlights.mp4");
-    let segment_paths: Vec<PathBuf> = state
-        .segment_outputs
-        .iter()
-        .map(PathBuf::from)
-        .collect();
+    let segment_paths: Vec<PathBuf> = state.segment_outputs.iter().map(PathBuf::from).collect();
     let segment_refs: Vec<&Path> = segment_paths.iter().map(|p| p.as_path()).collect();
 
     let opts = ConcatOptions {
@@ -248,8 +244,7 @@ pub fn merge_highlights(
         .concat(&segment_refs, &highlights_output, &opts)
         .map_err(|e| e.to_string())?;
 
-    state.highlighted = true;
-    state.highlights_output = highlights_output.display().to_string();
+    reeln_state::mark_highlighted(&mut state, highlights_output.display().to_string());
 
     reeln_state::save_game_state(&state, game_dir).map_err(|e| e.to_string())?;
 
@@ -263,8 +258,98 @@ pub fn merge_highlights(
 /// Mark a game as finished.
 pub fn finish_game(game_dir: &Path) -> Result<GameState, String> {
     let mut state = reeln_state::load_game_state(game_dir).map_err(|e| e.to_string())?;
-    state.finished = true;
-    state.finished_at = chrono::Utc::now().to_rfc3339();
+    reeln_state::mark_finished(&mut state);
     reeln_state::save_game_state(&state, game_dir).map_err(|e| e.to_string())?;
     Ok(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finish_game_sets_finished_and_populated_timestamp() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        let original = crate::test_utils::create_test_game(&game_dir);
+        assert!(!original.finished);
+        assert!(original.finished_at.is_empty());
+
+        let result = finish_game(&game_dir).unwrap();
+
+        assert!(result.finished);
+        assert!(!result.finished_at.is_empty());
+        // Timestamp should be a valid RFC 3339 datetime
+        chrono::DateTime::parse_from_rfc3339(&result.finished_at)
+            .expect("finished_at should be valid RFC 3339");
+
+        // Verify persisted to disk
+        let reloaded = reeln_state::load_game_state(&game_dir).unwrap();
+        assert!(reloaded.finished);
+        assert_eq!(reloaded.finished_at, result.finished_at);
+    }
+
+    #[test]
+    fn finish_game_preserves_existing_state_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game1");
+        let mut state = crate::test_utils::create_test_game(&game_dir);
+        state.segments_processed = vec![1, 2];
+        state.highlighted = true;
+        state.game_info.home_team = "Eagles".to_string();
+        reeln_state::save_game_state(&state, &game_dir).unwrap();
+
+        let result = finish_game(&game_dir).unwrap();
+
+        assert!(result.finished);
+        assert_eq!(result.segments_processed, vec![1, 2]);
+        assert!(result.highlighted);
+        assert_eq!(result.game_info.home_team, "Eagles");
+    }
+
+    #[test]
+    fn finish_game_errors_for_nonexistent_dir() {
+        let err = finish_game(Path::new("/tmp/nonexistent_reeln_game_ops_xyz")).unwrap_err();
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn init_game_slug_matches_cli_team_profile_filename() {
+        // CLI parity regression: dock-created games must use the same
+        // slug scheme the CLI uses to look up team profiles. A hyphen-based
+        // slug (the old behavior) breaks `--player-numbers` roster lookup
+        // because the CLI tries to load `{level}/{slug}.json` and finds
+        // nothing.
+        use reeln_config::PathConfig;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let output_dir = tmp.path().to_path_buf();
+
+        let config = AppConfig {
+            paths: PathConfig {
+                output_dir: Some(output_dir.clone()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let registry = SportRegistry::default();
+        let params = InitGameParams {
+            sport: "hockey".to_string(),
+            home_team: "Machine Orange".to_string(),
+            away_team: "Blades Maroon".to_string(),
+            date: "2026-04-10".to_string(),
+            venue: None,
+            game_time: None,
+            level: Some("2014".to_string()),
+            tournament: None,
+            period_length: None,
+            description: None,
+        };
+
+        let (_dir, state) = init_game(&config, &registry, params).unwrap();
+
+        assert_eq!(state.game_info.home_slug, "machine_orange");
+        assert_eq!(state.game_info.away_slug, "blades_maroon");
+    }
 }

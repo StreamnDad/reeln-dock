@@ -7,6 +7,13 @@
     getVersionInfo_,
     loadVersionInfo,
   } from "$lib/stores/plugins.svelte";
+  import { isPluginInstalled, isCliAvailable, refreshCliStatus } from "$lib/stores/cli.svelte";
+  import { installPluginViaCli } from "$lib/ipc/plugins";
+  import { help } from "$lib/help";
+  import HelpLink from "$lib/components/HelpLink.svelte";
+  import { log } from "$lib/stores/log.svelte";
+  import { getPluginUpdate } from "$lib/stores/updates.svelte";
+  import { open } from "@tauri-apps/plugin-shell";
 
   let registryPlugins = $derived(getRegistry());
   let regLoading = $derived(isRegistryLoading());
@@ -16,6 +23,10 @@
   // Expanded detail panel per plugin
   let expandedPlugin = $state<string | null>(null);
 
+  // Install state per plugin
+  let installingPlugin = $state<string | null>(null);
+  let installError = $state<string | null>(null);
+
   $effect(() => {
     loadRegistry();
     loadVersionInfo();
@@ -23,6 +34,26 @@
 
   function toggleExpand(name: string) {
     expandedPlugin = expandedPlugin === name ? null : name;
+  }
+
+  async function handleInstall(name: string) {
+    installingPlugin = name;
+    installError = null;
+    try {
+      const result = await installPluginViaCli(name);
+      if (result.success) {
+        log.info("Registry", `Installed ${name}`);
+        await refreshCliStatus();
+      } else {
+        installError = result.output || "Installation failed";
+        log.error("Registry", `Failed to install ${name}: ${result.output}`);
+      }
+    } catch (err) {
+      installError = String(err);
+      log.error("Registry", `Failed to install ${name}: ${err}`);
+    } finally {
+      installingPlugin = null;
+    }
   }
 
   /** Group capabilities by hook lifecycle phase. */
@@ -41,7 +72,7 @@
 <div>
   <div class="flex items-center justify-between mb-6">
     <div>
-      <h2 class="text-lg font-bold">Plugin Registry</h2>
+      <h2 class="text-lg font-bold">Plugin Registry <HelpLink text={help["plugins.registry"].text} url={help["plugins.registry"].url} /></h2>
       <p class="text-xs text-text-muted mt-0.5">
         Available plugins for the reeln ecosystem
         {#if version}
@@ -92,6 +123,21 @@
                   <span class="px-1.5 py-0.5 rounded bg-bg text-text-muted text-[10px] font-mono">
                     {plugin.package}
                   </span>
+                  {#if isCliAvailable()}
+                    {#if isPluginInstalled(plugin.name)}
+                      <span class="px-1.5 py-0.5 rounded-full bg-green-900/60 text-green-300 text-[10px]">installed</span>
+                      {@const pluginUpdate = getPluginUpdate(plugin.name)}
+                      {#if pluginUpdate}
+                        <button
+                          class="px-1.5 py-0.5 rounded-full bg-amber-900/60 text-amber-300 text-[10px] hover:bg-amber-800/60 transition-colors"
+                          onclick={(e) => { e.stopPropagation(); open(pluginUpdate.release_url); }}
+                          title="{pluginUpdate.current} → {pluginUpdate.latest}"
+                        >update available</button>
+                      {/if}
+                    {:else}
+                      <span class="px-1.5 py-0.5 rounded-full bg-bg text-text-muted text-[10px]">not installed</span>
+                    {/if}
+                  {/if}
                 </div>
                 <p class="text-sm text-text-muted mt-1">{plugin.description}</p>
               </div>
@@ -155,12 +201,34 @@
                 </div>
               </div>
 
-              <!-- Install instruction -->
-              <div class="mt-4 pt-3 border-t border-border/50">
-                <p class="text-xs text-text-muted mb-1.5">Install via pip:</p>
-                <code class="block px-3 py-2 bg-bg rounded text-xs font-mono text-text select-all">
-                  pip install {plugin.package}
-                </code>
+              <!-- Install / Update action -->
+              <div class="mt-4 pt-3 border-t border-border/50 flex items-center gap-3">
+                {#if isCliAvailable() && isPluginInstalled(plugin.name)}
+                  {@const pUpdate = getPluginUpdate(plugin.name)}
+                  {#if pUpdate}
+                    <button
+                      class="px-3 py-1.5 text-xs font-medium bg-amber-700 hover:bg-amber-600 text-text rounded-lg transition-colors"
+                      onclick={() => open(pUpdate.release_url)}
+                    >Update {pUpdate.current} &rarr; {pUpdate.latest}</button>
+                  {:else}
+                    <span class="px-3 py-1.5 text-xs font-medium text-green-300 border border-green-800 rounded-lg">Installed</span>
+                  {/if}
+                {:else if isCliAvailable()}
+                  <button
+                    class="px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-light text-text rounded-lg transition-colors disabled:opacity-50"
+                    disabled={installingPlugin === plugin.name}
+                    onclick={() => handleInstall(plugin.name)}
+                  >
+                    {installingPlugin === plugin.name ? "Installing..." : "Install"}
+                  </button>
+                  {#if installError && installingPlugin === null && expandedPlugin === plugin.name}
+                    <span class="text-xs text-accent">{installError}</span>
+                  {/if}
+                {:else}
+                  <code class="px-3 py-1.5 bg-bg rounded text-xs font-mono text-text select-all">
+                    pip install {plugin.package}
+                  </code>
+                {/if}
               </div>
             </div>
           {/if}
