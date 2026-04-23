@@ -221,6 +221,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        std::thread::sleep(std::time::Duration::from_millis(10));
         script
     }
 
@@ -233,6 +234,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        std::thread::sleep(std::time::Duration::from_millis(10));
         script
     }
 
@@ -414,6 +416,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        std::thread::sleep(std::time::Duration::from_millis(10));
 
         let result = execute_hook(
             script.to_str().unwrap(),

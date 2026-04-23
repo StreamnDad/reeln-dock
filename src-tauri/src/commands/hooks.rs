@@ -551,6 +551,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        std::thread::sleep(std::time::Duration::from_millis(10));
         script
     }
 
@@ -776,6 +777,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        std::thread::sleep(std::time::Duration::from_millis(10));
 
         let result = run_auth_command(
             script.to_str().unwrap(),
@@ -816,6 +818,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        std::thread::sleep(std::time::Duration::from_millis(10));
 
         let result = run_auth_command(
             script.to_str().unwrap(),
@@ -856,6 +859,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        std::thread::sleep(std::time::Duration::from_millis(10));
 
         let result = run_auth_command(
             script.to_str().unwrap(),
@@ -896,6 +900,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        std::thread::sleep(std::time::Duration::from_millis(10));
 
         let result = run_auth_command(
             script.to_str().unwrap(),
@@ -941,6 +946,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        std::thread::sleep(std::time::Duration::from_millis(10));
 
         let result = run_auth_command(
             script.to_str().unwrap(),
@@ -966,6 +972,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        std::thread::sleep(std::time::Duration::from_millis(10));
 
         let short_timeout = std::time::Duration::from_millis(300);
         let start = std::time::Instant::now();
@@ -996,6 +1003,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        std::thread::sleep(std::time::Duration::from_millis(10));
 
         let pid_holder = std::sync::Mutex::new(None::<u32>);
 
@@ -1033,6 +1041,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        std::thread::sleep(std::time::Duration::from_millis(10));
 
         let pid_holder = std::sync::Mutex::new(None::<u32>);
         let result = run_auth_command(
@@ -1059,6 +1068,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        std::thread::sleep(std::time::Duration::from_millis(10));
 
         let result = run_auth_command(
             script.to_str().unwrap(),
@@ -1087,6 +1097,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        std::thread::sleep(std::time::Duration::from_millis(10));
 
         let output = std::process::Command::new(script.to_str().unwrap())
             .arg("plugins")
