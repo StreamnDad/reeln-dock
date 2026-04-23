@@ -33,6 +33,10 @@ pub fn detect_reeln_cli(explicit_path: Option<&str>) -> Result<String, String> {
     if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
         // uv / pip --user
         candidates.push(home.join(".local/bin/reeln"));
+        // uv default venv (uv pip install creates ~/.venv when no venv is active)
+        candidates.push(home.join(".venv/bin/reeln"));
+        // uv tool install
+        candidates.push(home.join(".local/share/uv/tools/reeln/bin/reeln"));
         // pipx
         candidates.push(home.join(".local/pipx/venvs/reeln/bin/reeln"));
         // cargo
