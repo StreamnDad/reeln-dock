@@ -277,7 +277,27 @@ pub fn fetch_plugin_registry(state: State<'_, AppState>) -> Result<Vec<RegistryP
         return Ok(registry.plugins);
     }
 
-    Err("Plugin registry not found. Place registry/plugins.json in the config directory or workspace.".to_string())
+    // 3. Fetch from GitHub (canonical source)
+    let url = "https://raw.githubusercontent.com/StreamnDad/reeln-cli/main/registry/plugins.json";
+    match ureq::get(url).set("User-Agent", "reeln-dock").call() {
+        Ok(response) => {
+            let content: String = response
+                .into_string()
+                .map_err(|e| format!("Failed to read registry response: {e}"))?;
+
+            // Cache locally for offline use
+            let cache_path = state.effective_config_dir().join("registry");
+            let _ = std::fs::create_dir_all(&cache_path);
+            let _ = std::fs::write(cache_path.join("plugins.json"), &content);
+
+            let registry: PluginRegistry = serde_json::from_str(&content)
+                .map_err(|e| format!("Invalid registry JSON: {e}"))?;
+            Ok(registry.plugins)
+        }
+        Err(e) => Err(format!(
+            "Plugin registry not found locally and failed to fetch from GitHub: {e}"
+        )),
+    }
 }
 
 /// Add a plugin to a config profile (inserts into the `enabled` array).
