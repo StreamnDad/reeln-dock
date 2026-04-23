@@ -7,25 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-04-23
+
 ### Added
 
-- CI pipeline with GitHub Actions (frontend checks, Rust lint/test, multi-platform)
+- In-app plugin update via `reeln plugins update` — registry badges trigger upgrades directly
+- "Update All" button on registry page when plugin updates are available
+- In-app plugin uninstall via `reeln plugins uninstall` with two-click confirmation
+- Search/filter on the plugin registry page (by name and description)
+- Robust cross-platform CLI detection — searches pyenv, uv, pipx, Homebrew, cargo, and login shell PATH
+- Windows CLI detection — checks USERPROFILE, APPDATA, LOCALAPPDATA Python paths
+- CLI binary validation with `--version` before accepting (catches broken pyenv shims)
+- CI pipeline with GitHub Actions (frontend checks, Rust lint/test, multi-platform including Windows)
 - Release workflow with tag-triggered builds for macOS, Linux, and Windows
 - SHA-256 checksum generation for all release artifacts
-- Windows `.ico` icon for platform bundling
 - Comprehensive CLI logging — all `reeln` CLI commands, stdout, stderr, and exit codes piped to log viewer
-- Backend-to-frontend log bridge via Tauri events (`dock:log`)
-- Help tooltips with ReadTheDocs links on render profile settings and rendering options
-- `HelpLink` component for inline contextual help throughout the UI
-- Help text registry (`src/lib/help.ts`) mapping settings to documentation URLs
-- SECURITY.md, CONTRIBUTING.md, issue templates, PR template
-- GitHub Discussions enabled, branch protection on `main`, Dependabot alerts
+- Help tooltips with ReadTheDocs links across every screen (72 entries)
+- Native menu bar with Help (docs, issues, discussions), View (Cmd+1-4), keyboard shortcuts
+- About dialog with project info, icon, and credits
+- Automatic update checker for dock, CLI, and installed plugins (once per day)
+- Plugin update badges on registry page with version info
+- SECURITY.md, CONTRIBUTING.md, issue templates, PR template, GitHub Discussions
 
 ### Fixed
 
-- All `svelte-check` type errors (unused imports, test fixture types)
-- All `cargo clippy` warnings (`field_reassign_with_default`, collapsible `if`, clamp pattern)
-- Rust formatting across the codebase
+- CLI detection on macOS — Tauri apps don't inherit shell PATH; now searches common install locations directly
+- User-friendly "CLI not found" error message with `pip install` instructions and docs link
+- All `svelte-check` type errors and `cargo clippy` warnings
+- macOS Gatekeeper note in release instructions
 
 ## [0.1.0] - 2026-04-21
 
@@ -65,5 +74,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Create render entry when CLI iteration path doesn't save to game.json
 - Render iteration per-profile via CLI enforcing CLI-parity mandate
 
-[Unreleased]: https://github.com/StreamnDad/reeln-dock/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/StreamnDad/reeln-dock/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/StreamnDad/reeln-dock/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/StreamnDad/reeln-dock/releases/tag/v0.1.0
