@@ -14,10 +14,10 @@ pub struct HookExecutionResult {
 /// Discover the `reeln` CLI binary path.
 ///
 /// Checks in order:
-/// 1. Explicit path (from DockSettings)
-/// 2. Common install locations (pyenv, uv, pipx, homebrew, cargo, local bin)
-/// 3. `which reeln` / `where reeln` on PATH
-/// 4. Login shell PATH resolution (sources ~/.zshrc etc.)
+/// 1. Explicit path (from DockSettings) — validated with `--version`
+/// 2. Common install locations per platform — validated with `--version`
+/// 3. `which reeln` / `where reeln` on inherited PATH
+/// 4. (Unix) Login shell PATH resolution (sources ~/.zshrc etc.)
 pub fn detect_reeln_cli(explicit_path: Option<&str>) -> Result<String, String> {
     if let Some(path) = explicit_path {
         if std::path::Path::new(path).is_file() {
@@ -26,69 +26,91 @@ pub fn detect_reeln_cli(explicit_path: Option<&str>) -> Result<String, String> {
         return Err(format!("Configured reeln CLI path not found: {}", path));
     }
 
-    // Check common install locations directly — Tauri apps don't inherit
-    // the user's shell PATH on macOS, so pyenv/uv/pipx/homebrew paths
-    // won't be found by `which`.
-    if let Some(home) = std::env::var_os("HOME") {
-        let home = std::path::PathBuf::from(home);
-        let candidates = [
-            // uv / pip --user
-            home.join(".local/bin/reeln"),
-            // pyenv shims
-            home.join(".pyenv/shims/reeln"),
-            // pipx
-            home.join(".local/pipx/venvs/reeln/bin/reeln"),
-            // cargo (if installed via cargo install)
-            home.join(".cargo/bin/reeln"),
-            // Homebrew Apple Silicon
-            std::path::PathBuf::from("/opt/homebrew/bin/reeln"),
-            // Homebrew Intel
-            std::path::PathBuf::from("/usr/local/bin/reeln"),
-        ];
-        for candidate in &candidates {
-            if candidate.is_file() {
-                return Ok(candidate.to_string_lossy().to_string());
-            }
-        }
+    // Build platform-specific candidate list
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
 
-        // Check pyenv versions directly (shim may exist but not resolve)
+    #[cfg(unix)]
+    if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
+        // uv / pip --user
+        candidates.push(home.join(".local/bin/reeln"));
+        // pipx
+        candidates.push(home.join(".local/pipx/venvs/reeln/bin/reeln"));
+        // cargo
+        candidates.push(home.join(".cargo/bin/reeln"));
+        // Homebrew Apple Silicon
+        candidates.push(std::path::PathBuf::from("/opt/homebrew/bin/reeln"));
+        // Homebrew Intel / Linux system
+        candidates.push(std::path::PathBuf::from("/usr/local/bin/reeln"));
+        // Linux distro package
+        candidates.push(std::path::PathBuf::from("/usr/bin/reeln"));
+
+        // pyenv versions (real binaries, not shims which may not resolve)
         let pyenv_root = std::env::var("PYENV_ROOT")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| home.join(".pyenv"));
         if let Ok(versions) = std::fs::read_dir(pyenv_root.join("versions")) {
             for entry in versions.flatten() {
-                let bin = entry.path().join("bin/reeln");
-                if bin.is_file() {
-                    return Ok(bin.to_string_lossy().to_string());
-                }
+                candidates.push(entry.path().join("bin/reeln"));
             }
+        }
+
+        // pyenv shim (last — may exist without resolving to a real binary)
+        candidates.push(home.join(".pyenv/shims/reeln"));
+    }
+
+    #[cfg(windows)]
+    if let Some(profile) = std::env::var_os("USERPROFILE").map(std::path::PathBuf::from) {
+        // uv
+        candidates.push(profile.join(".local\\bin\\reeln.exe"));
+        // pip --user (common Python versions)
+        if let Some(appdata) = std::env::var_os("APPDATA").map(std::path::PathBuf::from) {
+            for ver in ["Python313", "Python312", "Python311", "Python310"] {
+                candidates.push(appdata.join(format!("Python\\{ver}\\Scripts\\reeln.exe")));
+            }
+            // pipx
+            candidates.push(appdata.join("pipx\\venvs\\reeln\\Scripts\\reeln.exe"));
+        }
+        // System Python installs
+        if let Some(local) = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from) {
+            for ver in ["Python313", "Python312", "Python311", "Python310"] {
+                candidates.push(local.join(format!("Programs\\Python\\{ver}\\Scripts\\reeln.exe")));
+            }
+        }
+        // cargo
+        candidates.push(profile.join(".cargo\\bin\\reeln.exe"));
+    }
+
+    // Check candidates — validate with --version to ensure the binary works
+    for candidate in &candidates {
+        if candidate.is_file() && validate_cli(candidate) {
+            return Ok(candidate.to_string_lossy().to_string());
         }
     }
 
-    // Try PATH discovery (works when launched from terminal)
+    // Try PATH discovery (works when launched from terminal or on well-configured systems)
     let cmd = if cfg!(target_os = "windows") {
         "where"
     } else {
         "which"
     };
-
-    let output = Command::new(cmd)
-        .arg("reeln")
-        .output()
-        .map_err(|e| format!("Failed to search for reeln CLI: {}", e))?;
-
-    if output.status.success() {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if let Ok(output) = Command::new(cmd).arg("reeln").output()
+        && output.status.success()
+    {
+        let path = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
         if !path.is_empty() && std::path::Path::new(&path).is_file() {
             return Ok(path);
         }
     }
 
-    // Last resort: ask a login shell to resolve PATH (picks up .zshrc, .bashrc)
+    // Last resort (Unix): ask a login shell to resolve PATH
     #[cfg(unix)]
     {
-        let shells = ["zsh", "bash"];
-        for shell in &shells {
+        for shell in ["zsh", "bash"] {
             if let Ok(output) = Command::new(shell).args(["-lc", "which reeln"]).output()
                 && output.status.success()
             {
@@ -105,6 +127,16 @@ pub fn detect_reeln_cli(explicit_path: Option<&str>) -> Result<String, String> {
          Or set the path in Dock settings."
             .to_string(),
     )
+}
+
+/// Validate that a candidate CLI binary actually runs (not a broken shim).
+fn validate_cli(path: &std::path::Path) -> bool {
+    Command::new(path)
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 /// Execute a single hook via the `reeln hooks run` CLI command.
