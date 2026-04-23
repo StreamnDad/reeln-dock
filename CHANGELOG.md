@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-04-23
+
+### Added
+
+- Fetch plugin registry from GitHub when not found locally, with offline cache
+
+### Fixed
+
+- Detect reeln CLI in uv default venv (`~/.venv/bin/`) and uv tool paths
+- Recommend `uv tool install reeln` in CLI not found error message
+- Help tooltips no longer clipped by app header or parent containers (uses viewport-level rendering)
+- Remove duplicate native browser tooltip overlapping custom tooltip
+- Clamp tooltip position to stay within window edges
+
 ## [0.1.1] - 2026-04-23
 
 ### Added
@@ -74,6 +88,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Create render entry when CLI iteration path doesn't save to game.json
 - Render iteration per-profile via CLI enforcing CLI-parity mandate
 
-[Unreleased]: https://github.com/StreamnDad/reeln-dock/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/StreamnDad/reeln-dock/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/StreamnDad/reeln-dock/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/StreamnDad/reeln-dock/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/StreamnDad/reeln-dock/releases/tag/v0.1.0
