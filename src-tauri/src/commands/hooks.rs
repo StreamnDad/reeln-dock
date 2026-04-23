@@ -465,6 +465,7 @@ pub async fn execute_plugin_hook(
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     const TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
     // -----------------------------------------------------------------------
