@@ -212,6 +212,7 @@ mod tests {
     // execute_hook — helper to create a script that outputs given text
     // -----------------------------------------------------------------------
 
+    #[cfg(unix)]
     fn make_script(dir: &std::path::Path, stdout_text: &str) -> std::path::PathBuf {
         let script = dir.join("fake_reeln.sh");
         std::fs::write(&script, format!("#!/bin/sh\necho '{}'\n", stdout_text)).unwrap();
@@ -223,6 +224,7 @@ mod tests {
         script
     }
 
+    #[cfg(unix)]
     fn make_failing_script(dir: &std::path::Path) -> std::path::PathBuf {
         let script = dir.join("fail_reeln.sh");
         std::fs::write(&script, "#!/bin/sh\nexit 1\n").unwrap();
@@ -238,6 +240,7 @@ mod tests {
     // execute_hook
     // -----------------------------------------------------------------------
 
+    #[cfg(unix)]
     #[test]
     fn test_execute_hook_success() {
         let dir = tempfile::tempdir().unwrap();
@@ -259,6 +262,7 @@ mod tests {
         assert_eq!(result.shared["k"], "v");
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_execute_hook_with_shared() {
         let dir = tempfile::tempdir().unwrap();
@@ -278,6 +282,7 @@ mod tests {
         assert_eq!(result.shared["inherited"], "yes");
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_execute_hook_with_config_path() {
         let dir = tempfile::tempdir().unwrap();
@@ -297,6 +302,7 @@ mod tests {
         assert!(result.success);
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_execute_hook_empty_output() {
         let dir = tempfile::tempdir().unwrap();
@@ -314,6 +320,7 @@ mod tests {
         assert!(result.unwrap_err().contains("no output"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_execute_hook_invalid_json() {
         let dir = tempfile::tempdir().unwrap();
@@ -345,6 +352,7 @@ mod tests {
         assert!(result.unwrap_err().contains("Failed to execute"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_execute_hook_empty_shared_not_passed() {
         // When shared is an empty object, the --shared-json flag should be skipped.
@@ -366,6 +374,7 @@ mod tests {
         assert!(result.success);
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_execute_hook_null_shared_not_passed() {
         // When shared is not an object (e.g. null), the --shared-json flag should be skipped.
@@ -386,6 +395,7 @@ mod tests {
         assert!(result.success);
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_execute_hook_stderr_captured_as_logs() {
         let dir = tempfile::tempdir().unwrap();
@@ -431,6 +441,7 @@ mod tests {
         assert_eq!(result.logs.len(), 3);
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_execute_hook_empty_stderr_not_added() {
         let dir = tempfile::tempdir().unwrap();
@@ -451,6 +462,7 @@ mod tests {
         assert!(result.logs.is_empty());
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_execute_hook_error_response() {
         let dir = tempfile::tempdir().unwrap();

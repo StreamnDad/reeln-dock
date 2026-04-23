@@ -772,6 +772,7 @@ mod tests {
     // CLI command arg verification (subprocess tests)
     // -----------------------------------------------------------------------
 
+    #[cfg(unix)]
     fn make_arg_dump_script(
         dir: &std::path::Path,
         args_file: &std::path::Path,
@@ -793,6 +794,7 @@ mod tests {
         script
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_run_queue_cli_edit_args() {
         let dir = tempfile::tempdir().unwrap();
@@ -834,6 +836,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_run_queue_cli_publish_with_target_and_config() {
         let dir = tempfile::tempdir().unwrap();
@@ -877,6 +880,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_run_queue_cli_remove_args() {
         let dir = tempfile::tempdir().unwrap();
@@ -899,6 +903,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_run_queue_cli_targets_with_config() {
         let dir = tempfile::tempdir().unwrap();
@@ -920,6 +925,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_run_queue_cli_publish_all_args() {
         let dir = tempfile::tempdir().unwrap();

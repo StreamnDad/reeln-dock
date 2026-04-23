@@ -531,6 +531,7 @@ mod tests {
     // install_plugin_via_cli — subprocess arg verification
     // -----------------------------------------------------------------------
 
+    #[cfg(unix)]
     fn make_arg_dump_script(
         dir: &std::path::Path,
         args_file: &std::path::Path,
@@ -552,6 +553,7 @@ mod tests {
         script
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_install_plugin_subprocess_args() {
         let dir = tempfile::tempdir().unwrap();
@@ -752,6 +754,7 @@ mod tests {
     // Auth subprocess arg verification
     // -----------------------------------------------------------------------
 
+    #[cfg(unix)]
     #[test]
     fn test_auth_check_all_subprocess_args() {
         let dir = tempfile::tempdir().unwrap();
@@ -792,6 +795,7 @@ mod tests {
         assert_eq!(args, vec!["plugins", "auth", "--json"]);
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_auth_check_single_plugin_args() {
         let dir = tempfile::tempdir().unwrap();
@@ -831,6 +835,7 @@ mod tests {
         assert_eq!(args, vec!["plugins", "auth", "google", "--json"]);
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_auth_refresh_subprocess_args() {
         let dir = tempfile::tempdir().unwrap();
@@ -870,6 +875,7 @@ mod tests {
         assert_eq!(args, vec!["plugins", "auth", "meta", "--refresh", "--json"]);
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_auth_with_config_path_args() {
         let dir = tempfile::tempdir().unwrap();
@@ -919,6 +925,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_auth_nonzero_exit_still_parses_json() {
         let dir = tempfile::tempdir().unwrap();
@@ -947,6 +954,7 @@ mod tests {
         assert_eq!(reports[0].results[0].status, "fail");
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_auth_timeout_kills_process() {
         let dir = tempfile::tempdir().unwrap();
@@ -976,6 +984,7 @@ mod tests {
         assert!(elapsed < std::time::Duration::from_secs(3));
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_auth_cancel_kills_process() {
         let dir = tempfile::tempdir().unwrap();
@@ -1012,6 +1021,7 @@ mod tests {
         drop(handle);
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_auth_pid_holder_tracks_pid() {
         let dir = tempfile::tempdir().unwrap();
@@ -1037,6 +1047,7 @@ mod tests {
         assert!(pid_holder.lock().unwrap().is_none());
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_auth_invalid_json_returns_error() {
         let dir = tempfile::tempdir().unwrap();
@@ -1060,6 +1071,7 @@ mod tests {
         assert!(result.unwrap_err().contains("Failed to parse auth output"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_install_plugin_failure_returns_stderr() {
         let dir = tempfile::tempdir().unwrap();

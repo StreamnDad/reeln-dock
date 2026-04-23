@@ -1139,6 +1139,7 @@ mod tests {
     use super::*;
     /// Create a script that dumps its CLI args to a file, then exits with code 1
     /// so render_via_cli returns early (before trying to load game state post-render).
+    #[cfg(unix)]
     fn make_arg_dump_script(dir: &Path, args_file: &Path) -> PathBuf {
         let script = dir.join("fake_reeln.sh");
         std::fs::write(
@@ -1157,6 +1158,7 @@ mod tests {
         script
     }
 
+    #[cfg(unix)]
     fn read_dumped_args(args_file: &Path) -> Vec<String> {
         std::fs::read_to_string(args_file)
             .unwrap()
@@ -1169,6 +1171,7 @@ mod tests {
     // render_via_cli — CLI arg construction
     // -----------------------------------------------------------------------
 
+    #[cfg(unix)]
     #[test]
     fn test_cli_args_short_mode_minimal() {
         let dir = tempfile::tempdir().unwrap();
@@ -1221,6 +1224,7 @@ mod tests {
         assert!(!args.contains(&"--player-numbers".to_string()));
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_cli_args_apply_mode() {
         let dir = tempfile::tempdir().unwrap();
@@ -1262,6 +1266,7 @@ mod tests {
         assert!(!args.contains(&"--no-branding".to_string()));
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_cli_args_with_config_path() {
         let dir = tempfile::tempdir().unwrap();
@@ -1301,6 +1306,7 @@ mod tests {
         assert_eq!(args[idx + 1], "/config/google-test.json");
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_cli_args_with_output_path() {
         let dir = tempfile::tempdir().unwrap();
@@ -1341,6 +1347,7 @@ mod tests {
         assert_eq!(args[idx + 1], out.to_str().unwrap());
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_cli_args_with_event_id() {
         let dir = tempfile::tempdir().unwrap();
@@ -1380,6 +1387,7 @@ mod tests {
         assert_eq!(args[idx + 1], "goal_1");
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_cli_args_empty_event_id_skipped() {
         let dir = tempfile::tempdir().unwrap();
@@ -1417,6 +1425,7 @@ mod tests {
         assert!(!args.contains(&"--event".to_string()));
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_cli_args_overrides_short_mode() {
         let dir = tempfile::tempdir().unwrap();
@@ -1480,6 +1489,7 @@ mod tests {
         assert_eq!(args[pc_idx + 1], "white");
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_cli_args_overrides_skipped_in_apply_mode() {
         let dir = tempfile::tempdir().unwrap();
@@ -1528,6 +1538,7 @@ mod tests {
         assert!(!args.contains(&"--smart".to_string()));
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_cli_args_scale_1_skipped() {
         let dir = tempfile::tempdir().unwrap();
@@ -1573,6 +1584,7 @@ mod tests {
         assert!(!args.contains(&"--speed".to_string()));
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_cli_args_scorer_and_assists() {
         let dir = tempfile::tempdir().unwrap();
@@ -1615,6 +1627,7 @@ mod tests {
         assert_eq!(args[assists_idx + 1], "Player Two,Player Three");
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_cli_args_iterate_and_debug() {
         let dir = tempfile::tempdir().unwrap();
@@ -1659,6 +1672,7 @@ mod tests {
         assert_eq!(args[et_idx + 1], "goal");
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_cli_args_all_params_combined() {
         let dir = tempfile::tempdir().unwrap();
@@ -1745,6 +1759,7 @@ mod tests {
         assert!(pi_values.contains(&"quality=high"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_cli_args_multi_profile_emits_repeatable_render_profile_flags() {
         // Core contract for the "one render, one queue entry" fix:
@@ -1807,6 +1822,7 @@ mod tests {
         assert!(!args.contains(&"--iterate".to_string()));
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_render_via_cli_rejects_empty_profile_list() {
         // Defensive: an empty profile list is a caller bug and should error
