@@ -123,8 +123,11 @@ pub fn detect_reeln_cli(explicit_path: Option<&str>) -> Result<String, String> {
     }
 
     Err(
-        "reeln CLI not found. Install it with: uv pip install reeln\n\
-         Or set the path in Dock settings."
+        "reeln CLI not found.\n\n\
+         Install with: pip install reeln\n\
+         Or: python -m pip install reeln\n\n\
+         Then restart reeln dock, or set the CLI path manually in Settings.\n\n\
+         See: https://reeln-cli.readthedocs.io/en/latest/install.html"
             .to_string(),
     )
 }
