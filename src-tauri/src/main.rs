@@ -169,6 +169,8 @@ fn main() {
             commands::hooks::detect_reeln_cli,
             commands::hooks::get_cli_version,
             commands::hooks::install_plugin_via_cli,
+            commands::hooks::update_plugin_via_cli,
+            commands::hooks::uninstall_plugin_via_cli,
             commands::hooks::execute_plugin_hook,
             commands::hooks::check_plugin_auth,
             commands::hooks::refresh_plugin_auth,

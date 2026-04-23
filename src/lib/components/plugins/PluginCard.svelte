@@ -2,7 +2,7 @@
   import type { AuthCheckResult, PluginDetail, RegistryPlugin } from "$lib/types/plugin";
   import { togglePlugin, updatePluginSettings } from "$lib/stores/plugins.svelte";
   import { installPluginViaCli } from "$lib/ipc/plugins";
-  import { refreshCliStatus } from "$lib/stores/cli.svelte";
+  import { isPluginInstalled, refreshCliStatus } from "$lib/stores/cli.svelte";
   import { log } from "$lib/stores/log.svelte";
 
   interface Props {
@@ -13,11 +13,12 @@
     authResults?: AuthCheckResult[];
     onAdd: () => void;
     onRemove: () => void;
+    onUninstall?: () => Promise<void>;
     onRefreshAuth?: () => Promise<AuthCheckResult[]>;
     onCancelAuth?: () => void;
   }
 
-  let { name, status, detail, registryInfo, authResults = [], onAdd, onRemove, onRefreshAuth, onCancelAuth }: Props = $props();
+  let { name, status, detail, registryInfo, authResults = [], onAdd, onRemove, onUninstall, onRefreshAuth, onCancelAuth }: Props = $props();
 
   let showSettings = $state(false);
   let editing = $state(false);
@@ -28,6 +29,9 @@
   let installing = $state(false);
   let installError = $state<string | null>(null);
   let refreshingAuth = $state(false);
+  let uninstalling = $state(false);
+  let confirmUninstall = $state(false);
+  let uninstallError = $state<string | null>(null);
 
   function startEditing() {
     if (!detail) return;
@@ -261,6 +265,49 @@
         >
           {confirmRemove ? "Confirm?" : "Remove"}
         </button>
+
+        <!-- Uninstall button -->
+        {#if onUninstall && isPluginInstalled(name)}
+          {#if confirmUninstall}
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-text-muted">Uninstall from system?</span>
+              <button
+                class="px-2 py-1 text-xs bg-accent text-text rounded transition-colors disabled:opacity-50"
+                disabled={uninstalling}
+                onclick={async () => {
+                  uninstalling = true;
+                  uninstallError = null;
+                  try {
+                    await onUninstall();
+                  } catch (e) {
+                    uninstallError = String(e);
+                  } finally {
+                    uninstalling = false;
+                    confirmUninstall = false;
+                  }
+                }}
+              >
+                {uninstalling ? "Uninstalling..." : "Confirm"}
+              </button>
+              <button
+                class="px-2 py-1 text-xs text-text-muted hover:text-text"
+                onclick={() => (confirmUninstall = false)}
+              >
+                Cancel
+              </button>
+            </div>
+          {:else}
+            <button
+              class="px-2 py-1 text-xs text-text-muted hover:text-accent transition-colors"
+              onclick={() => (confirmUninstall = true)}
+            >
+              Uninstall
+            </button>
+          {/if}
+          {#if uninstallError}
+            <span class="text-xs text-accent">{uninstallError}</span>
+          {/if}
+        {/if}
       {:else}
         <!-- Add button -->
         <button

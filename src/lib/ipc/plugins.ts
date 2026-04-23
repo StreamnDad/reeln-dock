@@ -86,6 +86,28 @@ export async function installPluginViaCli(
   return invoke<PluginInstallResult>("install_plugin_via_cli", { pluginName });
 }
 
+export async function updatePluginViaCli(
+  pluginName: string,
+  version?: string,
+  dryRun?: boolean,
+): Promise<PluginInstallResult> {
+  return invoke<PluginInstallResult>("update_plugin_via_cli", {
+    pluginName,
+    version: version ?? null,
+    dryRun: dryRun ?? false,
+  });
+}
+
+export async function uninstallPluginViaCli(
+  pluginName: string,
+  dryRun?: boolean,
+): Promise<PluginInstallResult> {
+  return invoke<PluginInstallResult>("uninstall_plugin_via_cli", {
+    pluginName,
+    dryRun: dryRun ?? false,
+  });
+}
+
 export async function getEnforceHooks(
   profilePath: string,
 ): Promise<boolean> {

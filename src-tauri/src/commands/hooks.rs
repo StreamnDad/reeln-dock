@@ -131,6 +131,125 @@ pub async fn install_plugin_via_cli(
     .map_err(|e| format!("Task join error: {}", e))?
 }
 
+/// Update a plugin (or all plugins) via the reeln CLI.
+#[tauri::command]
+pub async fn update_plugin_via_cli(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    plugin_name: String,
+    version: Option<String>,
+    dry_run: bool,
+) -> Result<PluginInstallResult, String> {
+    let cli_path_override = {
+        let settings = state.dock_settings.lock().map_err(|e| e.to_string())?;
+        settings.reeln_cli_path.clone()
+    };
+
+    let reeln_path = hook_executor::detect_reeln_cli(cli_path_override.as_deref())?;
+
+    let app_clone = app.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut cmd = Command::new(&reeln_path);
+        cmd.arg("plugins").arg("update");
+        if !plugin_name.is_empty() {
+            cmd.arg(&plugin_name);
+        }
+        if let Some(ref ver) = version {
+            cmd.arg("--version").arg(ver);
+        }
+        if dry_run {
+            cmd.arg("--dry-run");
+        }
+
+        let label = if plugin_name.is_empty() {
+            "all plugins".to_string()
+        } else {
+            plugin_name.clone()
+        };
+        crate::dock_log::emit(
+            &app_clone,
+            "info",
+            "Plugins",
+            &format!("Updating {label}..."),
+        );
+
+        let output = cmd
+            .output()
+            .map_err(|e| format!("Failed to run reeln plugins update: {e}"))?;
+
+        crate::dock_log::log_cli_output(&app_clone, "Plugins", &output);
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        Ok(PluginInstallResult {
+            success: output.status.success(),
+            output: if output.status.success() || stderr.is_empty() {
+                stdout
+            } else {
+                stderr
+            },
+        })
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
+/// Uninstall a plugin via the reeln CLI.
+#[tauri::command]
+pub async fn uninstall_plugin_via_cli(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    plugin_name: String,
+    dry_run: bool,
+) -> Result<PluginInstallResult, String> {
+    let cli_path_override = {
+        let settings = state.dock_settings.lock().map_err(|e| e.to_string())?;
+        settings.reeln_cli_path.clone()
+    };
+
+    let reeln_path = hook_executor::detect_reeln_cli(cli_path_override.as_deref())?;
+
+    let app_clone = app.clone();
+    tokio::task::spawn_blocking(move || {
+        crate::dock_log::emit(
+            &app_clone,
+            "info",
+            "Plugins",
+            &format!("Uninstalling {plugin_name}..."),
+        );
+
+        let mut cmd = Command::new(&reeln_path);
+        cmd.arg("plugins")
+            .arg("uninstall")
+            .arg(&plugin_name)
+            .arg("--force");
+        if dry_run {
+            cmd.arg("--dry-run");
+        }
+
+        let output = cmd
+            .output()
+            .map_err(|e| format!("Failed to run reeln plugins uninstall: {e}"))?;
+
+        crate::dock_log::log_cli_output(&app_clone, "Plugins", &output);
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        Ok(PluginInstallResult {
+            success: output.status.success(),
+            output: if output.status.success() || stderr.is_empty() {
+                stdout
+            } else {
+                stderr
+            },
+        })
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
 /// Result of `reeln plugins auth --json`.
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct AuthCheckResult {
@@ -1112,5 +1231,103 @@ mod tests {
         assert!(!output.status.success());
         let result_output = if stderr.is_empty() { stdout } else { stderr };
         assert!(result_output.contains("plugin not found"));
+    }
+
+    // -----------------------------------------------------------------------
+    // update_plugin_via_cli — CLI arg construction
+    // -----------------------------------------------------------------------
+
+    #[cfg(unix)]
+    #[test]
+    fn test_update_plugin_subprocess_args() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args.txt");
+        let script = make_arg_dump_script(dir.path(), &args_file);
+        let cli_path = script.to_str().unwrap();
+
+        let mut cmd = std::process::Command::new(cli_path);
+        cmd.arg("plugins").arg("update").arg("openai");
+        let output = cmd.output().unwrap();
+        assert!(output.status.success());
+
+        let args: Vec<String> = std::fs::read_to_string(&args_file)
+            .unwrap()
+            .lines()
+            .map(|l| l.to_string())
+            .collect();
+        assert_eq!(args, vec!["plugins", "update", "openai"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_update_plugin_with_version_args() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args.txt");
+        let script = make_arg_dump_script(dir.path(), &args_file);
+        let cli_path = script.to_str().unwrap();
+
+        let mut cmd = std::process::Command::new(cli_path);
+        cmd.arg("plugins")
+            .arg("update")
+            .arg("openai")
+            .arg("--version")
+            .arg("0.3.0");
+        let output = cmd.output().unwrap();
+        assert!(output.status.success());
+
+        let args: Vec<String> = std::fs::read_to_string(&args_file)
+            .unwrap()
+            .lines()
+            .map(|l| l.to_string())
+            .collect();
+        assert_eq!(
+            args,
+            vec!["plugins", "update", "openai", "--version", "0.3.0"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_update_all_plugins_args() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args.txt");
+        let script = make_arg_dump_script(dir.path(), &args_file);
+        let cli_path = script.to_str().unwrap();
+
+        let mut cmd = std::process::Command::new(cli_path);
+        cmd.arg("plugins").arg("update");
+        let output = cmd.output().unwrap();
+        assert!(output.status.success());
+
+        let args: Vec<String> = std::fs::read_to_string(&args_file)
+            .unwrap()
+            .lines()
+            .map(|l| l.to_string())
+            .collect();
+        assert_eq!(args, vec!["plugins", "update"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_uninstall_plugin_subprocess_args() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args.txt");
+        let script = make_arg_dump_script(dir.path(), &args_file);
+        let cli_path = script.to_str().unwrap();
+
+        let mut cmd = std::process::Command::new(cli_path);
+        cmd.arg("plugins")
+            .arg("uninstall")
+            .arg("openai")
+            .arg("--force");
+        let output = cmd.output().unwrap();
+        assert!(output.status.success());
+
+        let args: Vec<String> = std::fs::read_to_string(&args_file)
+            .unwrap()
+            .lines()
+            .map(|l| l.to_string())
+            .collect();
+        assert_eq!(args, vec!["plugins", "uninstall", "openai", "--force"]);
     }
 }

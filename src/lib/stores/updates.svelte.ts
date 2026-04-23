@@ -30,3 +30,8 @@ export function getPluginUpdate(pluginName: string): UpdateInfo | undefined {
 export function hasPluginUpdates(): boolean {
   return updates_.some((u) => u.name.startsWith("reeln-plugin-"));
 }
+
+/** Remove a plugin from the available updates list (after successful update). */
+export function clearPluginUpdate(pluginName: string): void {
+  updates_ = updates_.filter((u) => u.name !== `reeln-plugin-${pluginName}`);
+}

@@ -8,12 +8,11 @@
     loadVersionInfo,
   } from "$lib/stores/plugins.svelte";
   import { isPluginInstalled, isCliAvailable, refreshCliStatus } from "$lib/stores/cli.svelte";
-  import { installPluginViaCli } from "$lib/ipc/plugins";
+  import { installPluginViaCli, updatePluginViaCli } from "$lib/ipc/plugins";
   import { help } from "$lib/help";
   import HelpLink from "$lib/components/HelpLink.svelte";
   import { log } from "$lib/stores/log.svelte";
-  import { getPluginUpdate } from "$lib/stores/updates.svelte";
-  import { open } from "@tauri-apps/plugin-shell";
+  import { getPluginUpdate, clearPluginUpdate, hasPluginUpdates } from "$lib/stores/updates.svelte";
 
   let registryPlugins = $derived(getRegistry());
   let regLoading = $derived(isRegistryLoading());
@@ -26,6 +25,22 @@
   // Install state per plugin
   let installingPlugin = $state<string | null>(null);
   let installError = $state<string | null>(null);
+
+  // Update state
+  let updatingPlugin = $state<string | null>(null);
+  let updateError = $state<string | null>(null);
+
+  // Search
+  let searchQuery = $state("");
+  let filteredPlugins = $derived(
+    searchQuery
+      ? registryPlugins.filter(
+          (p) =>
+            p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            p.description.toLowerCase().includes(searchQuery.toLowerCase()),
+        )
+      : registryPlugins,
+  );
 
   $effect(() => {
     loadRegistry();
@@ -56,6 +71,51 @@
     }
   }
 
+  async function handleUpdate(name: string) {
+    updatingPlugin = name;
+    updateError = null;
+    try {
+      const result = await updatePluginViaCli(name);
+      if (result.success) {
+        log.info("Registry", `Updated ${name}`);
+        await refreshCliStatus();
+        clearPluginUpdate(name);
+      } else {
+        updateError = result.output || "Update failed";
+        log.error("Registry", `Failed to update ${name}: ${result.output}`);
+      }
+    } catch (err) {
+      updateError = String(err);
+      log.error("Registry", `Failed to update ${name}: ${err}`);
+    } finally {
+      updatingPlugin = null;
+    }
+  }
+
+  async function handleUpdateAll() {
+    updatingPlugin = "all";
+    updateError = null;
+    try {
+      const result = await updatePluginViaCli("");
+      if (result.success) {
+        log.info("Registry", "Updated all plugins");
+        await refreshCliStatus();
+        // Clear all plugin updates from the store
+        for (const plugin of registryPlugins) {
+          clearPluginUpdate(plugin.name);
+        }
+      } else {
+        updateError = result.output || "Update failed";
+        log.error("Registry", `Failed to update all plugins: ${result.output}`);
+      }
+    } catch (err) {
+      updateError = String(err);
+      log.error("Registry", `Failed to update all plugins: ${err}`);
+    } finally {
+      updatingPlugin = null;
+    }
+  }
+
   /** Group capabilities by hook lifecycle phase. */
   function hookPhase(cap: string): string {
     const hook = cap.replace("hook:", "");
@@ -80,12 +140,32 @@
         {/if}
       </p>
     </div>
-    <button
-      class="px-3 py-1.5 text-xs border border-border text-text-muted hover:text-text hover:border-secondary rounded-lg transition-colors"
-      onclick={() => loadRegistry()}
-    >
-      Refresh
-    </button>
+    <div class="flex items-center gap-2">
+      {#if hasPluginUpdates()}
+        <button
+          class="px-3 py-1.5 text-xs border border-amber-700 text-amber-300 hover:bg-amber-900/30 rounded-lg transition-colors disabled:opacity-50"
+          disabled={updatingPlugin === "all"}
+          onclick={handleUpdateAll}
+        >
+          {updatingPlugin === "all" ? "Updating..." : "Update All"}
+        </button>
+      {/if}
+      <button
+        class="px-3 py-1.5 text-xs border border-border text-text-muted hover:text-text hover:border-secondary rounded-lg transition-colors"
+        onclick={() => loadRegistry()}
+      >
+        Refresh
+      </button>
+    </div>
+  </div>
+
+  <div class="mb-4">
+    <input
+      type="text"
+      bind:value={searchQuery}
+      placeholder="Search plugins..."
+      class="w-full px-3 py-1.5 bg-bg border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-secondary"
+    />
   </div>
 
   {#if regLoading}
@@ -106,9 +186,13 @@
     <div class="text-text-muted text-center py-12">
       <p class="text-sm">No plugins in registry.</p>
     </div>
+  {:else if filteredPlugins.length === 0}
+    <div class="text-text-muted text-center py-12">
+      <p class="text-sm">No plugins match "{searchQuery}".</p>
+    </div>
   {:else}
     <div class="space-y-4">
-      {#each registryPlugins as plugin (plugin.name)}
+      {#each filteredPlugins as plugin (plugin.name)}
         {@const expanded = expandedPlugin === plugin.name}
         <div class="bg-surface rounded-lg border border-border overflow-hidden">
           <!-- Header -->
@@ -129,10 +213,11 @@
                       {@const pluginUpdate = getPluginUpdate(plugin.name)}
                       {#if pluginUpdate}
                         <button
-                          class="px-1.5 py-0.5 rounded-full bg-amber-900/60 text-amber-300 text-[10px] hover:bg-amber-800/60 transition-colors"
-                          onclick={(e) => { e.stopPropagation(); open(pluginUpdate.release_url); }}
+                          class="px-1.5 py-0.5 rounded-full bg-amber-900/60 text-amber-300 text-[10px] hover:bg-amber-800/60 transition-colors disabled:opacity-50"
+                          disabled={updatingPlugin === plugin.name}
+                          onclick={(e) => { e.stopPropagation(); handleUpdate(plugin.name); }}
                           title="{pluginUpdate.current} → {pluginUpdate.latest}"
-                        >update available</button>
+                        >{updatingPlugin === plugin.name ? "updating..." : "update available"}</button>
                       {/if}
                     {:else}
                       <span class="px-1.5 py-0.5 rounded-full bg-bg text-text-muted text-[10px]">not installed</span>
@@ -207,9 +292,13 @@
                   {@const pUpdate = getPluginUpdate(plugin.name)}
                   {#if pUpdate}
                     <button
-                      class="px-3 py-1.5 text-xs font-medium bg-amber-700 hover:bg-amber-600 text-text rounded-lg transition-colors"
-                      onclick={() => open(pUpdate.release_url)}
-                    >Update {pUpdate.current} &rarr; {pUpdate.latest}</button>
+                      class="px-3 py-1.5 text-xs font-medium bg-amber-700 hover:bg-amber-600 text-text rounded-lg transition-colors disabled:opacity-50"
+                      disabled={updatingPlugin === plugin.name}
+                      onclick={() => handleUpdate(plugin.name)}
+                    >{updatingPlugin === plugin.name ? "Updating..." : `Update ${pUpdate.current} → ${pUpdate.latest}`}</button>
+                    {#if updateError && updatingPlugin === null && expandedPlugin === plugin.name}
+                      <span class="text-xs text-accent">{updateError}</span>
+                    {/if}
                   {:else}
                     <span class="px-3 py-1.5 text-xs font-medium text-green-300 border border-green-800 rounded-lg">Installed</span>
                   {/if}
@@ -223,6 +312,9 @@
                   </button>
                   {#if installError && installingPlugin === null && expandedPlugin === plugin.name}
                     <span class="text-xs text-accent">{installError}</span>
+                  {/if}
+                  {#if updateError && updatingPlugin === null && expandedPlugin === plugin.name}
+                    <span class="text-xs text-accent">{updateError}</span>
                   {/if}
                 {:else}
                   <code class="px-3 py-1.5 bg-bg rounded text-xs font-mono text-text select-all">

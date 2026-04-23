@@ -20,8 +20,9 @@
     refreshAuth,
     cancelAuth,
   } from "$lib/stores/plugins.svelte";
-  import { getEnforceHooks, setEnforceHooks } from "$lib/ipc/plugins";
-  import { isPluginInstalled, isCliAvailable } from "$lib/stores/cli.svelte";
+  import { getEnforceHooks, setEnforceHooks, uninstallPluginViaCli } from "$lib/ipc/plugins";
+  import { isPluginInstalled, isCliAvailable, refreshCliStatus } from "$lib/stores/cli.svelte";
+  import { log } from "$lib/stores/log.svelte";
   import { help } from "$lib/help";
   import HelpLink from "$lib/components/HelpLink.svelte";
   import PluginCard from "./PluginCard.svelte";
@@ -143,6 +144,17 @@
 
   async function handleRemovePlugin(name: string) {
     await removePlugin(name);
+  }
+
+  async function handleUninstall(pluginName: string) {
+    const result = await uninstallPluginViaCli(pluginName);
+    if (result.success) {
+      log.info("Plugins", `Uninstalled ${pluginName}`);
+      await refreshCliStatus();
+      removePlugin(pluginName);
+    } else {
+      throw new Error(result.output || "Uninstall failed");
+    }
   }
 </script>
 
@@ -284,6 +296,7 @@
           authResults={authMap.get(`${selectedPath}::${up.name}`) ?? []}
           onAdd={() => handleAddPlugin(up.name)}
           onRemove={() => handleRemovePlugin(up.name)}
+          onUninstall={() => handleUninstall(up.name)}
           onRefreshAuth={() => refreshAuth(up.name)}
           onCancelAuth={() => cancelAuth()}
         />
