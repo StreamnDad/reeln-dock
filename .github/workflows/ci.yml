@@ -93,7 +93,9 @@ jobs:
       - name: Install system dependencies
         run: |
           brew install ffmpeg pkg-config
-          echo "PKG_CONFIG_PATH=$(brew --prefix ffmpeg)/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+          FFMPEG_PREFIX=$(brew --prefix ffmpeg)
+          echo "PKG_CONFIG_PATH=${FFMPEG_PREFIX}/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+          echo "LIBRARY_PATH=${FFMPEG_PREFIX}/lib:${LIBRARY_PATH:-}" >> $GITHUB_ENV
 
       - name: Clippy
         working-directory: reeln-dock/src-tauri
