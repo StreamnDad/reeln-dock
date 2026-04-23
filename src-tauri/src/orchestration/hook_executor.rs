@@ -122,14 +122,12 @@ pub fn detect_reeln_cli(explicit_path: Option<&str>) -> Result<String, String> {
         }
     }
 
-    Err(
-        "reeln CLI not found.\n\n\
+    Err("reeln CLI not found.\n\n\
          Install with: pip install reeln\n\
          Or: python -m pip install reeln\n\n\
          Then restart reeln dock, or set the CLI path manually in Settings.\n\n\
          See: https://reeln-cli.readthedocs.io/en/latest/install.html"
-            .to_string(),
-    )
+        .to_string())
 }
 
 /// Validate that a candidate CLI binary actually runs (not a broken shim).
