@@ -20,7 +20,11 @@
     if (hideTimeout) { clearTimeout(hideTimeout); hideTimeout = null; }
     if (buttonEl) {
       const rect = buttonEl.getBoundingClientRect();
-      tipX = rect.left + rect.width / 2;
+      const tipWidth = 256; // w-64 = 16rem = 256px
+      // Center on button, but clamp so tooltip stays within viewport
+      let x = rect.left + rect.width / 2;
+      x = Math.max(tipWidth / 2 + 8, Math.min(x, window.innerWidth - tipWidth / 2 - 8));
+      tipX = x;
       // If too close to top, flip tooltip below
       flipBelow = rect.top < 120;
       tipY = flipBelow ? rect.bottom + 8 : rect.top - 8;
@@ -49,7 +53,6 @@
     type="button"
     class="w-4 h-4 rounded-full bg-border text-text-muted text-[10px] font-bold leading-none hover:bg-secondary hover:text-text transition-colors flex items-center justify-center"
     onclick={url ? openDocs : undefined}
-    title={text}
   >?</button>
 </span>
 
