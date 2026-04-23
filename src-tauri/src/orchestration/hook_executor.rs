@@ -15,7 +15,9 @@ pub struct HookExecutionResult {
 ///
 /// Checks in order:
 /// 1. Explicit path (from DockSettings)
-/// 2. `which reeln` / `where reeln` on PATH
+/// 2. Common install locations (pyenv, uv, pipx, homebrew, cargo, local bin)
+/// 3. `which reeln` / `where reeln` on PATH
+/// 4. Login shell PATH resolution (sources ~/.zshrc etc.)
 pub fn detect_reeln_cli(explicit_path: Option<&str>) -> Result<String, String> {
     if let Some(path) = explicit_path {
         if std::path::Path::new(path).is_file() {
@@ -24,7 +26,46 @@ pub fn detect_reeln_cli(explicit_path: Option<&str>) -> Result<String, String> {
         return Err(format!("Configured reeln CLI path not found: {}", path));
     }
 
-    // Try PATH discovery
+    // Check common install locations directly — Tauri apps don't inherit
+    // the user's shell PATH on macOS, so pyenv/uv/pipx/homebrew paths
+    // won't be found by `which`.
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = std::path::PathBuf::from(home);
+        let candidates = [
+            // uv / pip --user
+            home.join(".local/bin/reeln"),
+            // pyenv shims
+            home.join(".pyenv/shims/reeln"),
+            // pipx
+            home.join(".local/pipx/venvs/reeln/bin/reeln"),
+            // cargo (if installed via cargo install)
+            home.join(".cargo/bin/reeln"),
+            // Homebrew Apple Silicon
+            std::path::PathBuf::from("/opt/homebrew/bin/reeln"),
+            // Homebrew Intel
+            std::path::PathBuf::from("/usr/local/bin/reeln"),
+        ];
+        for candidate in &candidates {
+            if candidate.is_file() {
+                return Ok(candidate.to_string_lossy().to_string());
+            }
+        }
+
+        // Check pyenv versions directly (shim may exist but not resolve)
+        let pyenv_root = std::env::var("PYENV_ROOT")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| home.join(".pyenv"));
+        if let Ok(versions) = std::fs::read_dir(pyenv_root.join("versions")) {
+            for entry in versions.flatten() {
+                let bin = entry.path().join("bin/reeln");
+                if bin.is_file() {
+                    return Ok(bin.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
+    // Try PATH discovery (works when launched from terminal)
     let cmd = if cfg!(target_os = "windows") {
         "where"
     } else {
@@ -38,8 +79,24 @@ pub fn detect_reeln_cli(explicit_path: Option<&str>) -> Result<String, String> {
 
     if output.status.success() {
         let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !path.is_empty() {
+        if !path.is_empty() && std::path::Path::new(&path).is_file() {
             return Ok(path);
+        }
+    }
+
+    // Last resort: ask a login shell to resolve PATH (picks up .zshrc, .bashrc)
+    #[cfg(unix)]
+    {
+        let shells = ["zsh", "bash"];
+        for shell in &shells {
+            if let Ok(output) = Command::new(shell).args(["-lc", "which reeln"]).output()
+                && output.status.success()
+            {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !path.is_empty() && std::path::Path::new(&path).is_file() {
+                    return Ok(path);
+                }
+            }
         }
     }
 
