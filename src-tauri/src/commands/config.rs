@@ -402,7 +402,11 @@ pub fn check_config_exists(config_path: Option<String>) -> ConfigExistsResponse 
     let exists = reeln_config::config_exists(path_ref);
     let resolved = path_ref
         .map(|p| p.display().to_string())
-        .unwrap_or_else(|| reeln_config::default_config_path(None).display().to_string());
+        .unwrap_or_else(|| {
+            reeln_config::default_config_path(None)
+                .display()
+                .to_string()
+        });
     ConfigExistsResponse {
         exists,
         path: resolved,
@@ -813,9 +817,7 @@ mod tests {
             auth_child_pid: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
 
-        let tauri_state = unsafe {
-            std::mem::transmute::<&AppState, State<'_, AppState>>(&state)
-        };
+        let tauri_state = unsafe { std::mem::transmute::<&AppState, State<'_, AppState>>(&state) };
 
         let result = create_initial_config(
             "hockey".to_string(),
@@ -828,10 +830,7 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(
-            err.contains("already exists"),
-            "unexpected error: {err}"
-        );
+        assert!(err.contains("already exists"), "unexpected error: {err}");
     }
 }
 
