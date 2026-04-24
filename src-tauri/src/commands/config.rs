@@ -299,6 +299,116 @@ pub fn rename_render_profile(
     write_raw_config(&raw, &config_path, &state)
 }
 
+// ── Init commands ──────────────────────────────────────────────────
+
+/// Sport info response for the frontend.
+#[derive(serde::Serialize)]
+pub struct SportInfoResponse {
+    pub name: String,
+    pub segment_name: String,
+    pub segment_count: u32,
+    pub duration_minutes: Option<u32>,
+    pub default_event_types: Vec<EventTypeResponse>,
+}
+
+/// Event type response for the frontend.
+#[derive(serde::Serialize)]
+pub struct EventTypeResponse {
+    pub name: String,
+    pub team_specific: bool,
+}
+
+/// List all available sports with their segment info and default event types.
+#[tauri::command]
+pub fn list_available_sports_init() -> Vec<SportInfoResponse> {
+    reeln_config::list_available_sports()
+        .into_iter()
+        .map(|s| SportInfoResponse {
+            name: s.name,
+            segment_name: s.segment_name,
+            segment_count: s.segment_count,
+            duration_minutes: s.duration_minutes,
+            default_event_types: s
+                .default_event_types
+                .iter()
+                .map(|e| EventTypeResponse {
+                    name: e.name().to_string(),
+                    team_specific: e.team_specific(),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+/// Response from create_initial_config.
+#[derive(Debug, serde::Serialize)]
+pub struct CreatedConfigResponse {
+    pub config: reeln_config::AppConfig,
+    pub path: String,
+}
+
+/// Create an initial config file from user choices, load it into AppState,
+/// and save dock settings pointing to it.
+#[tauri::command]
+pub fn create_initial_config(
+    sport: String,
+    source_dir: String,
+    output_dir: String,
+    config_path: Option<String>,
+    create_dirs: bool,
+    state: State<'_, AppState>,
+) -> Result<CreatedConfigResponse, String> {
+    let options = reeln_config::InitOptions {
+        sport,
+        source_dir: std::path::PathBuf::from(&source_dir),
+        output_dir: std::path::PathBuf::from(&output_dir),
+        config_path: config_path.as_deref().map(std::path::PathBuf::from),
+        create_dirs,
+    };
+
+    let saved_path = reeln_config::create_initial_config(&options).map_err(|e| e.to_string())?;
+    let saved_path_str = saved_path.display().to_string();
+
+    // Load the new config into AppState
+    let config = load_reeln_config(&saved_path_str)?;
+    {
+        let mut locked = state.config.lock().map_err(|e| e.to_string())?;
+        *locked = Some(config.clone());
+    }
+
+    // Save dock settings pointing to the new config
+    {
+        let mut settings = state.dock_settings.lock().map_err(|e| e.to_string())?;
+        settings.reeln_config_path = Some(saved_path_str.clone());
+        settings.save(&state.app_data_dir)?;
+    }
+
+    Ok(CreatedConfigResponse {
+        config,
+        path: saved_path_str,
+    })
+}
+
+/// Check whether a config file exists at the given or default path.
+#[derive(serde::Serialize)]
+pub struct ConfigExistsResponse {
+    pub exists: bool,
+    pub path: String,
+}
+
+#[tauri::command]
+pub fn check_config_exists(config_path: Option<String>) -> ConfigExistsResponse {
+    let path_ref = config_path.as_deref().map(Path::new);
+    let exists = reeln_config::config_exists(path_ref);
+    let resolved = path_ref
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| reeln_config::default_config_path(None).display().to_string());
+    ConfigExistsResponse {
+        exists,
+        path: resolved,
+    }
+}
+
 // ── Render queue persistence ────────────────────────────────────────
 
 #[cfg(test)]
@@ -564,6 +674,164 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(parsed["custom_field"], "preserved");
         assert_eq!(parsed["render_profiles"]["new"]["width"], 1080);
+    }
+
+    // ── list_available_sports_init ─────────────────────────────────
+
+    #[test]
+    fn list_available_sports_init_returns_builtin_sports() {
+        let sports = list_available_sports_init();
+        let names: Vec<&str> = sports.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"hockey"), "missing hockey");
+        assert!(names.contains(&"basketball"), "missing basketball");
+        assert!(names.contains(&"soccer"), "missing soccer");
+    }
+
+    #[test]
+    fn list_available_sports_init_hockey_segment_info() {
+        let sports = list_available_sports_init();
+        let hockey = sports.iter().find(|s| s.name == "hockey").unwrap();
+        assert_eq!(hockey.segment_name, "period");
+        assert_eq!(hockey.segment_count, 3);
+        assert!(hockey.duration_minutes.is_some());
+    }
+
+    #[test]
+    fn list_available_sports_init_hockey_event_types() {
+        let sports = list_available_sports_init();
+        let hockey = sports.iter().find(|s| s.name == "hockey").unwrap();
+        let names: Vec<&str> = hockey
+            .default_event_types
+            .iter()
+            .map(|e| e.name.as_str())
+            .collect();
+        assert!(names.contains(&"goal"));
+        // goal should be team_specific
+        let goal = hockey
+            .default_event_types
+            .iter()
+            .find(|e| e.name == "goal")
+            .unwrap();
+        assert!(goal.team_specific);
+    }
+
+    #[test]
+    fn list_available_sports_init_generic_no_events() {
+        let sports = list_available_sports_init();
+        let generic = sports.iter().find(|s| s.name == "generic").unwrap();
+        assert!(generic.default_event_types.is_empty());
+    }
+
+    // ── check_config_exists ───────────────────────────────────────
+
+    #[test]
+    fn check_config_exists_true_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, "{}").unwrap();
+        let resp = check_config_exists(Some(path.display().to_string()));
+        assert!(resp.exists);
+        assert_eq!(resp.path, path.display().to_string());
+    }
+
+    #[test]
+    fn check_config_exists_false_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nope.json");
+        let resp = check_config_exists(Some(path.display().to_string()));
+        assert!(!resp.exists);
+    }
+
+    #[test]
+    fn check_config_exists_none_uses_default_path() {
+        let resp = check_config_exists(None);
+        // Should return the default path regardless of whether it exists
+        assert!(resp.path.ends_with("config.json"));
+    }
+
+    // ── create_initial_config ─────────────────────────────────────
+
+    #[test]
+    fn create_initial_config_writes_and_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let source = dir.path().join("replays");
+        let output = dir.path().join("games");
+
+        let state = AppState {
+            config: std::sync::Mutex::new(None),
+            sport_registry: std::sync::Mutex::new(reeln_sport::SportRegistry::default()),
+            dock_settings: std::sync::Mutex::new(DockSettings::default()),
+            app_data_dir: dir.path().to_path_buf(),
+            media_backend: crate::test_utils::mock_backend(),
+            auth_child_pid: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        };
+
+        let tauri_state = unsafe {
+            // SAFETY: we only use the State within this test scope
+            std::mem::transmute::<&AppState, State<'_, AppState>>(&state)
+        };
+
+        let result = create_initial_config(
+            "hockey".to_string(),
+            source.display().to_string(),
+            output.display().to_string(),
+            Some(config_path.display().to_string()),
+            true,
+            tauri_state,
+        );
+
+        assert!(result.is_ok(), "create failed: {:?}", result.err());
+        let resp = result.unwrap();
+        assert_eq!(resp.config.sport, "hockey");
+        assert_eq!(resp.path, config_path.display().to_string());
+        // Config should be loaded into AppState
+        assert!(state.config.lock().unwrap().is_some());
+        // Dock settings should point to new config
+        let settings = state.dock_settings.lock().unwrap();
+        assert_eq!(
+            settings.reeln_config_path.as_deref(),
+            Some(config_path.display().to_string().as_str())
+        );
+        // Directories should be created
+        assert!(source.is_dir());
+        assert!(output.is_dir());
+    }
+
+    #[test]
+    fn create_initial_config_already_exists_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        std::fs::write(&config_path, "{}").unwrap();
+
+        let state = AppState {
+            config: std::sync::Mutex::new(None),
+            sport_registry: std::sync::Mutex::new(reeln_sport::SportRegistry::default()),
+            dock_settings: std::sync::Mutex::new(DockSettings::default()),
+            app_data_dir: dir.path().to_path_buf(),
+            media_backend: crate::test_utils::mock_backend(),
+            auth_child_pid: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        };
+
+        let tauri_state = unsafe {
+            std::mem::transmute::<&AppState, State<'_, AppState>>(&state)
+        };
+
+        let result = create_initial_config(
+            "hockey".to_string(),
+            dir.path().join("src").display().to_string(),
+            dir.path().join("out").display().to_string(),
+            Some(config_path.display().to_string()),
+            false,
+            tauri_state,
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("already exists"),
+            "unexpected error: {err}"
+        );
     }
 }
 

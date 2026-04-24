@@ -86,6 +86,9 @@ fn main() {
             commands::config::rename_render_profile,
             commands::config::save_render_stage,
             commands::config::load_render_stage,
+            commands::config::list_available_sports_init,
+            commands::config::create_initial_config,
+            commands::config::check_config_exists,
             // Games (read)
             commands::games::list_games,
             commands::games::get_game_state,

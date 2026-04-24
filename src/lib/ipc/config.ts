@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { AppConfig } from "$lib/types/config";
 import type { DockSettings, DockSettingsWithConfig, LoadedConfig } from "$lib/types/dock";
 
 export async function loadDockSettings(): Promise<DockSettingsWithConfig> {
@@ -47,4 +48,40 @@ export async function renameRenderProfile(
   newKey: string,
 ): Promise<void> {
   return invoke<void>("rename_render_profile", { oldKey, newKey });
+}
+
+// ── Init commands ──────────────────────────────────────────────────
+
+export interface SportInfoInit {
+  name: string;
+  segment_name: string;
+  segment_count: number;
+  duration_minutes: number | null;
+  default_event_types: { name: string; team_specific: boolean }[];
+}
+
+export async function listAvailableSportsInit(): Promise<SportInfoInit[]> {
+  return invoke<SportInfoInit[]>("list_available_sports_init");
+}
+
+export async function createInitialConfig(opts: {
+  sport: string;
+  sourceDir: string;
+  outputDir: string;
+  configPath?: string;
+  createDirs: boolean;
+}): Promise<{ config: AppConfig; path: string }> {
+  return invoke("create_initial_config", {
+    sport: opts.sport,
+    sourceDir: opts.sourceDir,
+    outputDir: opts.outputDir,
+    configPath: opts.configPath ?? null,
+    createDirs: opts.createDirs,
+  });
+}
+
+export async function checkConfigExists(
+  configPath?: string,
+): Promise<{ exists: boolean; path: string }> {
+  return invoke("check_config_exists", { configPath: configPath ?? null });
 }
