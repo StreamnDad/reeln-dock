@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-04-23
+
+### Added
+
+- Guided setup wizard — create a new config with sport picker, directory setup, and summary (no more "locate existing config" as the only option)
+- 3 new Tauri commands: `list_available_sports_init`, `create_initial_config`, `check_config_exists`
+
+### Fixed
+
+- Plugin install/update errors now scoped to the correct plugin (no longer leaks to other expanded cards)
+
 ## [0.1.2] - 2026-04-23
 
 ### Added
@@ -88,7 +99,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Create render entry when CLI iteration path doesn't save to game.json
 - Render iteration per-profile via CLI enforcing CLI-parity mandate
 
-[Unreleased]: https://github.com/StreamnDad/reeln-dock/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/StreamnDad/reeln-dock/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/StreamnDad/reeln-dock/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/StreamnDad/reeln-dock/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/StreamnDad/reeln-dock/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/StreamnDad/reeln-dock/releases/tag/v0.1.0

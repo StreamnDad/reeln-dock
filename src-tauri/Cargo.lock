@@ -3036,6 +3036,7 @@ version = "0.2.3"
 dependencies = [
  "dirs",
  "log",
+ "reeln-sport",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -3043,7 +3044,7 @@ dependencies = [
 
 [[package]]
 name = "reeln-dock"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "chrono",
  "filetime",
