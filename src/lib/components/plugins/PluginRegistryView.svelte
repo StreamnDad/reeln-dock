@@ -24,10 +24,12 @@
 
   // Install state per plugin
   let installingPlugin = $state<string | null>(null);
+  let installErrorPlugin = $state<string | null>(null);
   let installError = $state<string | null>(null);
 
   // Update state
   let updatingPlugin = $state<string | null>(null);
+  let updateErrorPlugin = $state<string | null>(null);
   let updateError = $state<string | null>(null);
 
   // Search
@@ -54,6 +56,7 @@
   async function handleInstall(name: string) {
     installingPlugin = name;
     installError = null;
+    installErrorPlugin = null;
     try {
       const result = await installPluginViaCli(name);
       if (result.success) {
@@ -61,10 +64,12 @@
         await refreshCliStatus();
       } else {
         installError = result.output || "Installation failed";
+        installErrorPlugin = name;
         log.error("Registry", `Failed to install ${name}: ${result.output}`);
       }
     } catch (err) {
       installError = String(err);
+      installErrorPlugin = name;
       log.error("Registry", `Failed to install ${name}: ${err}`);
     } finally {
       installingPlugin = null;
@@ -74,6 +79,7 @@
   async function handleUpdate(name: string) {
     updatingPlugin = name;
     updateError = null;
+    updateErrorPlugin = null;
     try {
       const result = await updatePluginViaCli(name);
       if (result.success) {
@@ -82,10 +88,12 @@
         clearPluginUpdate(name);
       } else {
         updateError = result.output || "Update failed";
+        updateErrorPlugin = name;
         log.error("Registry", `Failed to update ${name}: ${result.output}`);
       }
     } catch (err) {
       updateError = String(err);
+      updateErrorPlugin = name;
       log.error("Registry", `Failed to update ${name}: ${err}`);
     } finally {
       updatingPlugin = null;
@@ -296,7 +304,7 @@
                       disabled={updatingPlugin === plugin.name}
                       onclick={() => handleUpdate(plugin.name)}
                     >{updatingPlugin === plugin.name ? "Updating..." : `Update ${pUpdate.current} → ${pUpdate.latest}`}</button>
-                    {#if updateError && updatingPlugin === null && expandedPlugin === plugin.name}
+                    {#if updateError && updateErrorPlugin === plugin.name && updatingPlugin === null}
                       <span class="text-xs text-accent">{updateError}</span>
                     {/if}
                   {:else}
@@ -310,10 +318,10 @@
                   >
                     {installingPlugin === plugin.name ? "Installing..." : "Install"}
                   </button>
-                  {#if installError && installingPlugin === null && expandedPlugin === plugin.name}
+                  {#if installError && installErrorPlugin === plugin.name && installingPlugin === null}
                     <span class="text-xs text-accent">{installError}</span>
                   {/if}
-                  {#if updateError && updatingPlugin === null && expandedPlugin === plugin.name}
+                  {#if updateError && updateErrorPlugin === plugin.name && updatingPlugin === null}
                     <span class="text-xs text-accent">{updateError}</span>
                   {/if}
                 {:else}
