@@ -10,6 +10,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Minimal permissions — jobs only need to read source
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -18,8 +22,8 @@ jobs:
     name: Frontend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -34,19 +38,19 @@ jobs:
     # container:
     #   image: ghcr.io/streamndad/tauri-ci:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           path: reeln-dock
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           repository: StreamnDad/reeln-core
           path: reeln-core
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: reeln-dock/src-tauri
 
@@ -74,19 +78,19 @@ jobs:
     name: Rust (macOS)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           path: reeln-dock
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           repository: StreamnDad/reeln-core
           path: reeln-core
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: reeln-dock/src-tauri
 
@@ -108,35 +112,44 @@ jobs:
   rust-windows:
     name: Rust (Windows)
     runs-on: windows-latest
+    env:
+      FFMPEG_BUILD: autobuild-2026-05-13-13-53
+      FFMPEG_ZIP: ffmpeg-n7.1-latest-win64-gpl-shared-7.1.zip
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           path: reeln-dock
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           repository: StreamnDad/reeln-core
           path: reeln-core
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: reeln-dock/src-tauri
 
       - name: Cache FFmpeg
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         id: ffmpeg-cache
         with:
           path: ffmpeg
-          key: ffmpeg-win64-shared-7.1
+          key: ffmpeg-win64-shared-7.1-${{ env.FFMPEG_BUILD }}
 
       - name: Install FFmpeg
         if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
-          curl -sL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-win64-gpl-shared-7.1.zip" -o ffmpeg.zip
+          curl -fsSL \
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/${{ env.FFMPEG_BUILD }}/${{ env.FFMPEG_ZIP }}" \
+            -o ffmpeg.zip
+          curl -fsSL \
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/${{ env.FFMPEG_BUILD }}/${{ env.FFMPEG_ZIP }}.sha256" \
+            -o ffmpeg.zip.sha256
+          sha256sum --check ffmpeg.zip.sha256
           7z x ffmpeg.zip
           mv ffmpeg-n7.1-latest-win64-gpl-shared-7.1 ffmpeg
 
