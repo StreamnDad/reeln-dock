@@ -17,6 +17,14 @@ use super::progress::ProgressReporter;
 pub struct CliRenderParams<'a> {
     pub cli_path: &'a str,
     pub config_path: Option<&'a str>,
+    /// Plugin profile NAME (e.g. ``"production"``) corresponding to the
+    /// ``config_path`` above. When set, the CLI stores it on the queue
+    /// item as ``config_profile`` so that ``reeln queue publish`` later
+    /// loads the same config. Without this the queue item's profile is
+    /// empty and publish falls through to ``REELN_CONFIG`` / defaults —
+    /// which is how every target ended up reporting "disabled" despite
+    /// the production config having the flags on.
+    pub config_profile: Option<&'a str>,
     pub input_clip: &'a Path,
     pub game_dir: &'a Path,
     /// One or more render profiles. When multiple are given, the CLI renders
@@ -101,9 +109,23 @@ pub fn render_via_cli(params: &CliRenderParams) -> Result<Vec<RenderEntry>, Stri
         cmd.arg("--event").arg(eid);
     }
 
-    // Config path
+    // Config path. Also export REELN_CONFIG so the CLI's auxiliary
+    // lookups (team profiles, rosters, etc.) resolve relative to this
+    // file when the dock subprocess was launched without inheriting
+    // the user's shell env (e.g. from Finder/the macOS Dock). The CLI
+    // also tracks the active --config path internally, but exporting
+    // the env var keeps older CLI builds compatible.
     if let Some(config) = params.config_path {
         cmd.arg("--config").arg(config);
+        cmd.env("REELN_CONFIG", config);
+    }
+    // Profile name accompanies the config path so the CLI records it on
+    // queue items. ``--config`` wins for actual config loading; this is
+    // only consumed by ``add_to_queue`` to populate ``config_profile``.
+    if let Some(profile) = params.config_profile
+        && !profile.is_empty()
+    {
+        cmd.arg("--profile").arg(profile);
     }
 
     // Overrides (only for "short" mode — "apply" doesn't accept these)
@@ -1168,6 +1190,30 @@ mod tests {
             .collect()
     }
 
+    /// Like ``make_arg_dump_script`` but also writes ``REELN_CONFIG`` to a
+    /// separate file so tests can verify env-var propagation.
+    #[cfg(unix)]
+    fn make_arg_and_env_dump_script(
+        dir: &Path,
+        args_file: &Path,
+        env_file: &Path,
+    ) -> PathBuf {
+        let script = dir.join("fake_reeln_with_env.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"{}\"\nprintf '%s' \"${{REELN_CONFIG:-}}\" > \"{}\"\necho 'test failure' >&2\nexit 1\n",
+                args_file.display(),
+                env_file.display(),
+            ),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        script
+    }
+
     // -----------------------------------------------------------------------
     // render_via_cli — CLI arg construction
     // -----------------------------------------------------------------------
@@ -1186,6 +1232,7 @@ mod tests {
         let params = CliRenderParams {
             cli_path: script.to_str().unwrap(),
             config_path: None,
+            config_profile: None,
             input_clip: &input,
             game_dir: &game_dir,
             profile_names: &["tiktok"],
@@ -1239,6 +1286,7 @@ mod tests {
         let params = CliRenderParams {
             cli_path: script.to_str().unwrap(),
             config_path: None,
+            config_profile: None,
             input_clip: &input,
             game_dir: &game_dir,
             profile_names: &["full"],
@@ -1281,6 +1329,7 @@ mod tests {
         let params = CliRenderParams {
             cli_path: script.to_str().unwrap(),
             config_path: Some("/config/google-test.json"),
+            config_profile: None,
             input_clip: &input,
             game_dir: &game_dir,
             profile_names: &["tiktok"],
@@ -1307,6 +1356,153 @@ mod tests {
         assert_eq!(args[idx + 1], "/config/google-test.json");
     }
 
+    /// Regression: ``config_profile`` must reach the CLI as ``--profile``.
+    ///
+    /// Without this the CLI's typer ``profile`` parameter stays None and
+    /// ``add_to_queue`` stores ``config_profile=""`` on the queue item.
+    /// At publish time the empty profile falls through to defaults /
+    /// ``REELN_CONFIG`` env and every plugin reports its flag as off
+    /// even when the rendered-with config had the flag on — which is
+    /// exactly what the user saw with the production profile.
+    #[cfg(unix)]
+    #[test]
+    fn test_cli_config_profile_passes_profile_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args.txt");
+        let script = make_arg_dump_script(dir.path(), &args_file);
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let game_dir = dir.path().join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+
+        let params = CliRenderParams {
+            cli_path: script.to_str().unwrap(),
+            config_path: Some("/config/config.production.json"),
+            config_profile: Some("production"),
+            input_clip: &input,
+            game_dir: &game_dir,
+            profile_names: &["tiktok"],
+            event_id: None,
+            mode: None,
+            overrides: None,
+            scorer: None,
+            assist1: None,
+            assist2: None,
+            iterate: false,
+            event_type: None,
+            debug: false,
+            player_numbers: None,
+            no_branding: false,
+            output_path: None,
+            queue: true,
+            app_handle: None,
+        };
+
+        let _ = render_via_cli(&params);
+        let args = read_dumped_args(&args_file);
+
+        let idx = args
+            .iter()
+            .position(|a| a == "--profile")
+            .expect("--profile not present in CLI args");
+        assert_eq!(args[idx + 1], "production");
+
+        let cidx = args.iter().position(|a| a == "--config").unwrap();
+        assert_eq!(args[cidx + 1], "/config/config.production.json");
+    }
+
+    /// When ``config_profile`` is None or empty, no ``--profile`` flag is
+    /// emitted. Guards against a stale empty value showing up on queue
+    /// items via ``--profile ""``.
+    #[cfg(unix)]
+    #[test]
+    fn test_cli_empty_or_missing_config_profile_omits_flag() {
+        for cp in [None, Some("")] {
+            let dir = tempfile::tempdir().unwrap();
+            let args_file = dir.path().join("args.txt");
+            let script = make_arg_dump_script(dir.path(), &args_file);
+            let input = dir.path().join("clip.mp4");
+            std::fs::write(&input, "fake").unwrap();
+            let game_dir = dir.path().join("game");
+            std::fs::create_dir_all(&game_dir).unwrap();
+
+            let params = CliRenderParams {
+                cli_path: script.to_str().unwrap(),
+                config_path: Some("/config/some.json"),
+                config_profile: cp,
+                input_clip: &input,
+                game_dir: &game_dir,
+                profile_names: &["tiktok"],
+                event_id: None,
+                mode: None,
+                overrides: None,
+                scorer: None,
+                assist1: None,
+                assist2: None,
+                iterate: false,
+                event_type: None,
+                debug: false,
+                player_numbers: None,
+                no_branding: false,
+                output_path: None,
+                queue: false,
+                app_handle: None,
+            };
+
+            let _ = render_via_cli(&params);
+            let args = read_dumped_args(&args_file);
+
+            assert!(
+                !args.contains(&"--profile".to_string()),
+                "--profile leaked for config_profile={cp:?}: {args:?}"
+            );
+        }
+    }
+
+    /// Regression guard for the "Team profile not found" failure when the
+    /// dock subprocess inherits a bare env (e.g. launched from Finder):
+    /// the CLI's auxiliary lookups resolve teams relative to
+    /// ``REELN_CONFIG``, so the dock MUST export it alongside ``--config``.
+    #[cfg(unix)]
+    #[test]
+    fn test_cli_config_path_also_exports_reeln_config_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args.txt");
+        let env_file = dir.path().join("env.txt");
+        let script = make_arg_and_env_dump_script(dir.path(), &args_file, &env_file);
+        let input = dir.path().join("clip.mp4");
+        std::fs::write(&input, "fake").unwrap();
+        let game_dir = dir.path().join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+
+        let params = CliRenderParams {
+            cli_path: script.to_str().unwrap(),
+            config_path: Some("/config/config.production.json"),
+            config_profile: None,
+            input_clip: &input,
+            game_dir: &game_dir,
+            profile_names: &["tiktok"],
+            event_id: None,
+            mode: None,
+            overrides: None,
+            scorer: None,
+            assist1: None,
+            assist2: None,
+            iterate: false,
+            event_type: None,
+            debug: false,
+            player_numbers: None,
+            no_branding: false,
+            output_path: None,
+            queue: false,
+            app_handle: None,
+        };
+
+        let _ = render_via_cli(&params);
+        let dumped_env = std::fs::read_to_string(&env_file).unwrap();
+        assert_eq!(dumped_env, "/config/config.production.json");
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_cli_args_with_output_path() {
@@ -1322,6 +1518,7 @@ mod tests {
         let params = CliRenderParams {
             cli_path: script.to_str().unwrap(),
             config_path: None,
+            config_profile: None,
             input_clip: &input,
             game_dir: &game_dir,
             profile_names: &["tiktok"],
@@ -1362,6 +1559,7 @@ mod tests {
         let params = CliRenderParams {
             cli_path: script.to_str().unwrap(),
             config_path: None,
+            config_profile: None,
             input_clip: &input,
             game_dir: &game_dir,
             profile_names: &["tiktok"],
@@ -1402,6 +1600,7 @@ mod tests {
         let params = CliRenderParams {
             cli_path: script.to_str().unwrap(),
             config_path: None,
+            config_profile: None,
             input_clip: &input,
             game_dir: &game_dir,
             profile_names: &["tiktok"],
@@ -1450,6 +1649,7 @@ mod tests {
         let params = CliRenderParams {
             cli_path: script.to_str().unwrap(),
             config_path: None,
+            config_profile: None,
             input_clip: &input,
             game_dir: &game_dir,
             profile_names: &["tiktok"],
@@ -1511,6 +1711,7 @@ mod tests {
         let params = CliRenderParams {
             cli_path: script.to_str().unwrap(),
             config_path: None,
+            config_profile: None,
             input_clip: &input,
             game_dir: &game_dir,
             profile_names: &["full"],
@@ -1559,6 +1760,7 @@ mod tests {
         let params = CliRenderParams {
             cli_path: script.to_str().unwrap(),
             config_path: None,
+            config_profile: None,
             input_clip: &input,
             game_dir: &game_dir,
             profile_names: &["tiktok"],
@@ -1599,6 +1801,7 @@ mod tests {
         let params = CliRenderParams {
             cli_path: script.to_str().unwrap(),
             config_path: None,
+            config_profile: None,
             input_clip: &input,
             game_dir: &game_dir,
             profile_names: &["tiktok"],
@@ -1642,6 +1845,7 @@ mod tests {
         let params = CliRenderParams {
             cli_path: script.to_str().unwrap(),
             config_path: None,
+            config_profile: None,
             input_clip: &input,
             game_dir: &game_dir,
             profile_names: &["tiktok"],
@@ -1706,6 +1910,7 @@ mod tests {
         let params = CliRenderParams {
             cli_path: script.to_str().unwrap(),
             config_path: Some("/config/google.json"),
+            config_profile: None,
             input_clip: &input,
             game_dir: &game_dir,
             profile_names: &["tiktok"],
@@ -1778,6 +1983,7 @@ mod tests {
         let params = CliRenderParams {
             cli_path: script.to_str().unwrap(),
             config_path: None,
+            config_profile: None,
             input_clip: &input,
             game_dir: &game_dir,
             profile_names: &["player-overlay", "slowmo-ten-second-clip"],
@@ -1839,6 +2045,7 @@ mod tests {
         let params = CliRenderParams {
             cli_path: script.to_str().unwrap(),
             config_path: None,
+            config_profile: None,
             input_clip: &input,
             game_dir: &game_dir,
             profile_names: &[],

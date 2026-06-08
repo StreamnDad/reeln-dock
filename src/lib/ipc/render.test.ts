@@ -70,6 +70,7 @@ describe("renderShort", () => {
       playerNumbers: "48,3,58",
       debug: true,
       configPath: "/config/google.json",
+      configProfile: null,
       noBranding: false,
       queue: null,
     });
@@ -95,9 +96,35 @@ describe("renderShort", () => {
       playerNumbers: null,
       debug: null,
       configPath: null,
+      configProfile: null,
       noBranding: null,
       queue: null,
     });
+  });
+
+  it("forwards configProfile so the CLI stores it on the queue item", async () => {
+    mockInvoke.mockResolvedValue({});
+    await renderShort(
+      "/clip.mp4",
+      "/out",
+      "default",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "/config/config.production.json",
+      undefined,
+      true,
+      "production",
+    );
+    const args = mockInvoke.mock.calls[0][1];
+    expect(args.configProfile).toBe("production");
+    expect(args.configPath).toBe("/config/config.production.json");
   });
 });
 
@@ -142,6 +169,7 @@ describe("renderIteration", () => {
       playerNumbers: "48,3",
       debug: false,
       configPath: "/config/profile.json",
+      configProfile: null,
       noBranding: true,
       queue: null,
     });
@@ -167,9 +195,35 @@ describe("renderIteration", () => {
       playerNumbers: null,
       debug: null,
       configPath: null,
+      configProfile: null,
       noBranding: null,
       queue: null,
     });
+  });
+
+  it("forwards configProfile so the CLI stores it on the queue item", async () => {
+    mockInvoke.mockResolvedValue([]);
+    await renderIteration(
+      "/clip.mp4",
+      "/out",
+      [{ profile_name: "default" }],
+      undefined,
+      undefined,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "/config/config.production.json",
+      undefined,
+      true,
+      "production",
+    );
+    const args = mockInvoke.mock.calls[0][1];
+    expect(args.configProfile).toBe("production");
+    expect(args.configPath).toBe("/config/config.production.json");
   });
 });
 

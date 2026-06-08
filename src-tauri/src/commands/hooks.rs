@@ -437,8 +437,11 @@ fn run_auth_command(
     }
     cmd.arg("--json");
 
+    // Also export REELN_CONFIG so the CLI resolves teams/rosters
+    // relative to this file even when the subprocess env is bare.
     if let Some(cfg) = config_path {
         cmd.arg("--config").arg(cfg);
+        cmd.env("REELN_CONFIG", cfg);
     }
 
     cmd.stdout(std::process::Stdio::piped());
@@ -1048,6 +1051,46 @@ mod tests {
                 "/path/to/config.json"
             ]
         );
+    }
+
+    /// Regression: ``--config`` must also export ``REELN_CONFIG`` so the
+    /// plugin-auth subprocess resolves config-adjacent paths (teams,
+    /// rosters, secrets) against the chosen config — important when the
+    /// dock is launched without a shell env (Finder/macOS Dock).
+    #[cfg(unix)]
+    #[test]
+    fn test_auth_with_config_path_exports_reeln_config_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let env_file = dir.path().join("env.txt");
+
+        let script = dir.path().join("fake_reeln_env.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s' \"${{REELN_CONFIG:-}}\" > \"{}\"\necho '{{\"plugins\": []}}'\n",
+                env_file.display(),
+            ),
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let result = run_auth_command(
+            script.to_str().unwrap(),
+            Some("google"),
+            false,
+            Some("/path/to/config.json"),
+            TEST_TIMEOUT,
+            None,
+        );
+        assert!(result.is_ok(), "auth command failed: {:?}", result.err());
+
+        let dumped_env = std::fs::read_to_string(&env_file).unwrap();
+        assert_eq!(dumped_env, "/path/to/config.json");
     }
 
     #[cfg(unix)]

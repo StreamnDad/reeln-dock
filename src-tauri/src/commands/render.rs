@@ -108,6 +108,7 @@ pub async fn render_short(
     player_numbers: Option<String>,
     debug: Option<bool>,
     config_path: Option<String>,
+    config_profile: Option<String>,
     no_branding: Option<bool>,
     queue: Option<bool>,
 ) -> Result<serde_json::Value, String> {
@@ -165,6 +166,7 @@ pub async fn render_short(
         let pn = player_numbers.clone();
         let cli_owned = cli.clone();
         let et = event_type;
+        let cprofile = config_profile.clone();
         let app_clone = app.clone();
 
         let result = tokio::task::spawn_blocking(move || {
@@ -172,6 +174,7 @@ pub async fn render_short(
             let params = render_ops::CliRenderParams {
                 cli_path: &cli_owned,
                 config_path: config_path.as_deref(),
+                config_profile: cprofile.as_deref(),
                 input_clip: &input,
                 game_dir: &game_path,
                 profile_names: &profile_names,
@@ -293,6 +296,7 @@ pub async fn render_iteration(
     player_numbers: Option<String>,
     debug: Option<bool>,
     config_path: Option<String>,
+    config_profile: Option<String>,
     no_branding: Option<bool>,
     queue: Option<bool>,
 ) -> Result<serde_json::Value, String> {
@@ -357,6 +361,7 @@ pub async fn render_iteration(
         let et = event_type;
         let items_owned = items.clone();
         let cfg_path = config_path.clone();
+        let cfg_profile = config_profile.clone();
         let app_clone = app.clone();
 
         let result = tokio::task::spawn_blocking(move || {
@@ -387,6 +392,7 @@ pub async fn render_iteration(
             let params = render_ops::CliRenderParams {
                 cli_path: &cli_owned,
                 config_path: cfg_path.as_deref(),
+                config_profile: cfg_profile.as_deref(),
                 input_clip: &input,
                 game_dir: &game_path,
                 profile_names: &name_refs,

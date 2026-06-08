@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-06-07
+
+### Added
+
+- Render IPC commands (`render_short`, `render_iteration`) now accept a `configProfile` parameter — the plugin profile name (e.g. `"production"`) accompanies the `--config` path so the CLI records it on the queue item. Without it, `reeln queue publish` falls through to defaults and every plugin reports its flag as off.
+- `queue_publish` / `queue_publish_all` derive a concrete `config.<profile>.json` path from the queue item's stored profile when the frontend doesn't pass one — fixes Finder-launched dock instances where `REELN_CONFIG` isn't inherited from the shell.
+- Per-CLI-subprocess `REELN_CONFIG` env export alongside `--config <path>` in `render_via_cli`, `hook_executor::execute_hook`, `queue::run_queue_cli_with_profile`, and `hooks::run_auth_command`. Auxiliary CLI lookups (team profiles, rosters, secrets) now resolve against the chosen config regardless of how the dock was launched.
+
+### Fixed
+
+- "Team profile not found: <level>/<team>" when publishing or rendering from a GUI launch — the dock's CLI subprocesses no longer inherit a bare env that resolves teams against the macOS platform default directory.
+- Goal renders no longer pull the home roster for away events — the previous failure was a missing `team_hint` in the CLI's `_resolve_player_numbers`, fixed here by ensuring the dock passes `--profile <name>` so the CLI gets enough context.
+- Multi-profile renders from the queue UI now actually produce both passes concatenated; previously only the last `--render-profile` value survived.
+
 ## [0.1.3] - 2026-04-23
 
 ### Added

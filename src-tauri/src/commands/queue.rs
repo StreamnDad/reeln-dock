@@ -187,8 +187,11 @@ fn run_queue_cli_with_profile(
     for arg in args {
         cmd.arg(arg);
     }
+    // Also export REELN_CONFIG so the CLI resolves teams/rosters
+    // relative to this file even when the subprocess env is bare.
     if let Some(config) = config_path {
         cmd.arg("--config").arg(config);
+        cmd.env("REELN_CONFIG", config);
     }
     if let Some(p) = profile {
         cmd.arg("--profile").arg(p);
@@ -389,6 +392,26 @@ pub async fn queue_edit(
     .map_err(|e| format!("Task join error: {e}"))?
 }
 
+/// Compute a ``config.<profile>.json`` path under *effective_dir* when
+/// *profile* is set AND the file exists on disk. Returns ``None`` for
+/// missing files so the caller falls back to ``--profile``-only behaviour
+/// and the CLI's own error reporting kicks in for typos.
+///
+/// Extracted from ``queue_publish`` / ``queue_publish_all`` so the path
+/// derivation can be unit-tested without spinning up a Tauri ``State``.
+fn derive_config_path_from_profile(
+    effective_dir: &Path,
+    profile: Option<&str>,
+) -> Option<String> {
+    let profile = profile.filter(|p| !p.is_empty())?;
+    let candidate = effective_dir.join(format!("config.{profile}.json"));
+    if candidate.is_file() {
+        candidate.to_str().map(|s| s.to_string())
+    } else {
+        None
+    }
+}
+
 /// Publish a queue item to target(s).
 #[tauri::command]
 pub async fn queue_publish(
@@ -400,6 +423,14 @@ pub async fn queue_publish(
     config_path: Option<String>,
 ) -> Result<CliQueueItem, String> {
     let cli_path = resolve_cli_path(&state)?;
+    // Resolve the effective config dir up-front (lock-free for the
+    // spawn_blocking closure) so we can derive a ``--config`` path from
+    // the queue item's stored profile name when the frontend didn't
+    // supply one. Without this, the CLI subprocess could miss
+    // ``REELN_CONFIG`` (Finder/GUI launches) and resolve the profile
+    // against the wrong base directory — silently loading defaults
+    // where every publish flag is off.
+    let effective_dir = state.effective_config_dir();
 
     let app_clone = app.clone();
     tokio::task::spawn_blocking(move || {
@@ -413,6 +444,15 @@ pub async fn queue_publish(
                     .map(|i| i.config_profile.clone())
             })
             .filter(|p| !p.is_empty());
+
+        // Derive a concrete ``--config`` path from the stored profile when
+        // the frontend didn't pass one. See ``derive_config_path_from_profile``.
+        let derived_config = if config_path.is_none() {
+            derive_config_path_from_profile(&effective_dir, stored_profile.as_deref())
+        } else {
+            None
+        };
+        let effective_config = config_path.or(derived_config);
 
         let mut args = vec!["publish", &item_id];
         args.push("--game-dir");
@@ -432,7 +472,7 @@ pub async fn queue_publish(
         let output = run_queue_cli_with_profile(
             &cli_path,
             &args,
-            config_path.as_deref(),
+            effective_config.as_deref(),
             stored_profile.as_deref(),
         )?;
         crate::dock_log::log_cli_output(&app_clone, "Queue", &output);
@@ -459,6 +499,11 @@ pub async fn queue_publish_all(
     config_path: Option<String>,
 ) -> Result<Vec<CliQueueItem>, String> {
     let cli_path = resolve_cli_path(&state)?;
+    // Same rationale as ``queue_publish``: derive a ``--config`` path
+    // from the first rendered item's stored profile when the frontend
+    // didn't pass one, so the subprocess loads the right plugin
+    // settings regardless of how the dock was launched.
+    let effective_dir = state.effective_config_dir();
 
     let app_clone = app.clone();
     tokio::task::spawn_blocking(move || {
@@ -466,11 +511,28 @@ pub async fn queue_publish_all(
         args.push("--game-dir");
         args.push(&game_dir);
 
+        let derived_config = if config_path.is_none() {
+            read_queue_file(Path::new(&game_dir))
+                .ok()
+                .and_then(|q| {
+                    q.items
+                        .iter()
+                        .find(|i| !i.config_profile.is_empty())
+                        .map(|i| i.config_profile.clone())
+                })
+                .and_then(|profile| {
+                    derive_config_path_from_profile(&effective_dir, Some(&profile))
+                })
+        } else {
+            None
+        };
+        let effective_config = config_path.or(derived_config);
+
         let log_args: Vec<&str> = std::iter::once("queue")
             .chain(args.iter().copied())
             .collect();
         crate::dock_log::log_cli_command(&app_clone, "Queue", &cli_path, &log_args);
-        let output = run_queue_cli(&cli_path, &args, config_path.as_deref())?;
+        let output = run_queue_cli(&cli_path, &args, effective_config.as_deref())?;
         crate::dock_log::log_cli_output(&app_clone, "Queue", &output);
         check_cli_output(&output)?;
 
@@ -839,6 +901,67 @@ mod tests {
         );
     }
 
+    // -----------------------------------------------------------------------
+    // derive_config_path_from_profile — fallback when frontend omits config
+    // -----------------------------------------------------------------------
+
+    /// Regression: when the frontend can't resolve the profile (e.g. its
+    /// in-memory queue cache is stale and still shows ``config_profile=""``),
+    /// the Rust side must derive ``config.<profile>.json`` from the queue
+    /// item's stored profile + the dock's effective config dir. Without
+    /// this, the CLI subprocess gets neither ``--config`` nor a usable
+    /// ``REELN_CONFIG`` (Finder/GUI launches), falls back to the platform
+    /// default, fails to find ``config.production.json``, and every
+    /// publish target reports its flag as off.
+    #[test]
+    fn test_derive_config_resolves_existing_profile_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("config.production.json"),
+            "{\"config_version\":1}",
+        )
+        .unwrap();
+
+        let resolved =
+            super::derive_config_path_from_profile(dir.path(), Some("production"));
+        assert_eq!(
+            resolved.as_deref(),
+            Some(
+                dir.path()
+                    .join("config.production.json")
+                    .to_str()
+                    .unwrap()
+            )
+        );
+    }
+
+    /// Non-existent profile file → ``None`` so the caller falls back to
+    /// ``--profile`` alone and the CLI emits its own "config not found"
+    /// error instead of being silently rerouted to a wrong path.
+    #[test]
+    fn test_derive_config_returns_none_when_file_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        // Only an unrelated profile exists.
+        std::fs::write(
+            dir.path().join("config.staging.json"),
+            "{\"config_version\":1}",
+        )
+        .unwrap();
+
+        let resolved =
+            super::derive_config_path_from_profile(dir.path(), Some("production"));
+        assert!(resolved.is_none());
+    }
+
+    /// Empty / None profile → ``None`` (never emits a bogus
+    /// ``config..json`` path).
+    #[test]
+    fn test_derive_config_returns_none_for_empty_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(super::derive_config_path_from_profile(dir.path(), None).is_none());
+        assert!(super::derive_config_path_from_profile(dir.path(), Some("")).is_none());
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_run_queue_cli_publish_with_target_and_config() {
@@ -904,6 +1027,44 @@ mod tests {
             args,
             vec!["queue", "remove", "abc123", "--game-dir", "/game"]
         );
+    }
+
+    /// Regression: ``--config`` must also export ``REELN_CONFIG`` so the
+    /// CLI's auxiliary lookups (teams/rosters) resolve relative to that
+    /// file. Without this, dock-launched-from-Finder queue commands fail
+    /// with "Team profile not found".
+    #[cfg(unix)]
+    #[test]
+    fn test_run_queue_cli_config_also_exports_reeln_config_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args.txt");
+        let env_file = dir.path().join("env.txt");
+        let script = dir.path().join("fake_reeln_with_env.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"{}\"\nprintf '%s' \"${{REELN_CONFIG:-}}\" > \"{}\"\n",
+                args_file.display(),
+                env_file.display(),
+            ),
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let _output = run_queue_cli(
+            script.to_str().unwrap(),
+            &["targets"],
+            Some("/my/config.json"),
+        )
+        .unwrap();
+
+        let dumped_env = std::fs::read_to_string(&env_file).unwrap();
+        assert_eq!(dumped_env, "/my/config.json");
     }
 
     #[cfg(unix)]

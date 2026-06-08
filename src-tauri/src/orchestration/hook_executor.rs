@@ -170,8 +170,11 @@ pub fn execute_hook(
         cmd.arg("--shared-json").arg(&shared_json);
     }
 
+    // Also export REELN_CONFIG so the CLI resolves teams/rosters
+    // relative to this file even when the subprocess env is bare.
     if let Some(path) = config_path {
         cmd.arg("--config").arg(path);
+        cmd.env("REELN_CONFIG", path);
     }
 
     let output = cmd
@@ -396,6 +399,45 @@ mod tests {
         .unwrap();
 
         assert!(result.success);
+    }
+
+    /// Regression: ``--config`` must also export ``REELN_CONFIG`` so the
+    /// hook subprocess (and any nested CLI calls) resolve teams/rosters
+    /// against the same config the dock chose.
+    #[cfg(unix)]
+    #[test]
+    fn test_execute_hook_with_config_path_exports_reeln_config_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let env_file = dir.path().join("env.txt");
+        let script = dir.path().join("dump_env_hook.sh");
+        // The script must still emit a valid hook result JSON to stdout so
+        // ``execute_hook`` parses it successfully.
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s' \"${{REELN_CONFIG:-}}\" > \"{}\"\necho '{{\"success\":true,\"hook\":\"on_game_init\",\"shared\":{{}},\"logs\":[],\"errors\":[]}}'\n",
+                env_file.display(),
+            ),
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let _ = execute_hook(
+            script.to_str().unwrap(),
+            "on_game_init",
+            &serde_json::json!({}),
+            &serde_json::json!({}),
+            Some("/cfg/config.production.json"),
+        )
+        .unwrap();
+
+        let dumped_env = std::fs::read_to_string(&env_file).unwrap();
+        assert_eq!(dumped_env, "/cfg/config.production.json");
     }
 
     #[cfg(unix)]
