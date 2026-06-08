@@ -399,10 +399,7 @@ pub async fn queue_edit(
 ///
 /// Extracted from ``queue_publish`` / ``queue_publish_all`` so the path
 /// derivation can be unit-tested without spinning up a Tauri ``State``.
-fn derive_config_path_from_profile(
-    effective_dir: &Path,
-    profile: Option<&str>,
-) -> Option<String> {
+fn derive_config_path_from_profile(effective_dir: &Path, profile: Option<&str>) -> Option<String> {
     let profile = profile.filter(|p| !p.is_empty())?;
     let candidate = effective_dir.join(format!("config.{profile}.json"));
     if candidate.is_file() {
@@ -520,9 +517,7 @@ pub async fn queue_publish_all(
                         .find(|i| !i.config_profile.is_empty())
                         .map(|i| i.config_profile.clone())
                 })
-                .and_then(|profile| {
-                    derive_config_path_from_profile(&effective_dir, Some(&profile))
-                })
+                .and_then(|profile| derive_config_path_from_profile(&effective_dir, Some(&profile)))
         } else {
             None
         };
@@ -922,16 +917,10 @@ mod tests {
         )
         .unwrap();
 
-        let resolved =
-            super::derive_config_path_from_profile(dir.path(), Some("production"));
+        let resolved = super::derive_config_path_from_profile(dir.path(), Some("production"));
         assert_eq!(
             resolved.as_deref(),
-            Some(
-                dir.path()
-                    .join("config.production.json")
-                    .to_str()
-                    .unwrap()
-            )
+            Some(dir.path().join("config.production.json").to_str().unwrap())
         );
     }
 
@@ -948,8 +937,7 @@ mod tests {
         )
         .unwrap();
 
-        let resolved =
-            super::derive_config_path_from_profile(dir.path(), Some("production"));
+        let resolved = super::derive_config_path_from_profile(dir.path(), Some("production"));
         assert!(resolved.is_none());
     }
 
@@ -1051,8 +1039,7 @@ mod tests {
         .unwrap();
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
-                .unwrap();
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
 

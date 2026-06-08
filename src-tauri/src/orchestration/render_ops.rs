@@ -1193,11 +1193,7 @@ mod tests {
     /// Like ``make_arg_dump_script`` but also writes ``REELN_CONFIG`` to a
     /// separate file so tests can verify env-var propagation.
     #[cfg(unix)]
-    fn make_arg_and_env_dump_script(
-        dir: &Path,
-        args_file: &Path,
-        env_file: &Path,
-    ) -> PathBuf {
+    fn make_arg_and_env_dump_script(dir: &Path, args_file: &Path, env_file: &Path) -> PathBuf {
         let script = dir.join("fake_reeln_with_env.sh");
         std::fs::write(
             &script,
