@@ -1,8 +1,5 @@
 <script lang="ts">
-  import { getLogEntries, getLogLevel, setLogLevel, clearLogs, type LogLevel } from "$lib/stores/log.svelte";
-
-  let entries = $derived(getLogEntries());
-  let level = $derived(getLogLevel());
+  import { logStore, type LogLevel } from "$lib/stores/log.svelte";
 
   const levels: LogLevel[] = ["debug", "info", "warn", "error"];
 
@@ -22,9 +19,12 @@
   let logContainer: HTMLDivElement | undefined = $state();
   let autoScroll = $state(true);
 
+  // Reactivity tracking: ``logStore.visible`` is a getter that reads
+  // ``entries`` and ``minLevel``, so the effect re-runs whenever either
+  // changes. This is what the previous module-scope $state pattern
+  // failed to do cross-module.
   $effect(() => {
-    // Re-run when entries change
-    entries.length;
+    logStore.visible.length;
     if (autoScroll && logContainer) {
       logContainer.scrollTop = logContainer.scrollHeight;
     }
@@ -37,8 +37,8 @@
     <select
       id="log-level-select"
       class="px-2 py-1 bg-bg border border-border rounded text-sm text-text focus:outline-none focus:border-secondary"
-      value={level}
-      onchange={(e) => setLogLevel(e.currentTarget.value as LogLevel)}
+      value={logStore.minLevel}
+      onchange={(e) => (logStore.minLevel = e.currentTarget.value as LogLevel)}
     >
       {#each levels as l}
         <option value={l}>{l.toUpperCase()}</option>
@@ -50,21 +50,21 @@
     </label>
     <button
       class="px-3 py-1 text-xs bg-bg border border-border rounded hover:border-accent text-text-muted hover:text-accent transition-colors"
-      onclick={clearLogs}
+      onclick={() => logStore.clear()}
     >
       Clear
     </button>
-    <span class="text-xs text-text-muted">{entries.length} entries</span>
+    <span class="text-xs text-text-muted">{logStore.visible.length} entries</span>
   </div>
 
   <div
     bind:this={logContainer}
     class="flex-1 overflow-y-auto bg-bg rounded-lg border border-border p-2 font-mono text-xs leading-5"
   >
-    {#if entries.length === 0}
+    {#if logStore.visible.length === 0}
       <p class="text-text-muted text-center py-4">No log entries</p>
     {:else}
-      {#each entries as entry (entry.timestamp + entry.message)}
+      {#each logStore.visible as entry (entry.timestamp + entry.message)}
         <div class="flex gap-2 hover:bg-surface-hover px-1 rounded">
           <span class="text-text-muted shrink-0">{formatTime(entry.timestamp)}</span>
           <span class="{levelColors[entry.level]} shrink-0 w-12 uppercase">{entry.level}</span>
