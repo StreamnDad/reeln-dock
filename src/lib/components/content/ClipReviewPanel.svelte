@@ -9,7 +9,7 @@
   import { renderPreview, deletePreview, listRenderProfiles } from "$lib/ipc/render";
   import { listConfigProfiles } from "$lib/ipc/plugins";
   import type { ConfigProfile } from "$lib/types/plugin";
-  import { addToQueue as addToRenderQueue, isClipInQueue } from "$lib/stores/renderQueue.svelte";
+  import { addToQueue as addToRenderQueue, isClipInQueue, isClipInCliQueue } from "$lib/stores/renderQueue.svelte";
   import { editingQueueItem } from "$lib/stores/navigation";
   import { getDockSettings } from "$lib/stores/config.svelte";
   import { useStore } from "$lib/stores/bridge.svelte";
@@ -202,8 +202,12 @@
   let videoSrc = $derived(convertFileSrc(fullClipPath));
   let videoError = $state(false);
 
-  // Duplicate detection — warn when this clip is already in the queue
+  // Duplicate detection — warn when this clip is already pending in the
+  // staging queue *or* already rendered (sitting in the CLI publish queue).
+  // The CLI derives the output filename from the source clip stem, so a
+  // second render silently overwrites the first.
   let clipAlreadyInQueue = $derived(isClipInQueue(fullClipPath));
+  let clipAlreadyRendered = $derived(isClipInCliQueue(fullClipPath));
 
   // Current tag state
   let currentTeam = $derived(
@@ -841,7 +845,11 @@
 
       {#if clipAlreadyInQueue}
         <div class="px-2 py-1.5 bg-yellow-900/20 border border-yellow-800/50 rounded text-[11px] text-yellow-400">
-          This clip is already in the render queue
+          This clip is already pending in the render queue
+        </div>
+      {:else if clipAlreadyRendered}
+        <div class="px-2 py-1.5 bg-yellow-900/20 border border-yellow-800/50 rounded text-[11px] text-yellow-400">
+          This clip has already been rendered (in the publish queue)
         </div>
       {/if}
 
