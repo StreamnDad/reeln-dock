@@ -147,6 +147,12 @@ async function renderStageItem(item: RenderStageItem): Promise<void> {
         configPath,
         item.noBranding,
         true, // queue: true — add to CLI queue
+        // Plugin profile NAME (e.g. "production") flows through so the
+        // CLI records it on the queue item as ``config_profile``. Without
+        // this, ``reeln queue publish`` falls through to defaults and
+        // every plugin reports its enable-flag as off even though the
+        // chosen config has the flag on.
+        item.pluginProfile,
       );
     } else {
       const items: IterationItem[] = item.profiles.map((p) => ({
@@ -171,6 +177,9 @@ async function renderStageItem(item: RenderStageItem): Promise<void> {
         configPath,
         item.noBranding,
         true, // queue: true — add to CLI queue
+        // See note above — needed for queue-publish to load the same
+        // plugin config that rendered the item.
+        item.pluginProfile,
       );
     }
 
