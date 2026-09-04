@@ -54,6 +54,22 @@ export function isClipInStage(clipPath: string): boolean {
   return stageItems.some((q) => q.clipPath === clipPath && q.status === "pending");
 }
 
+/** True when a CLI queue item exists whose output was produced from
+ * ``clipPath``. The CLI writes outputs to ``{clip.parent}/shorts/{clip.stem}_<suffix>.mp4``
+ * (see reeln-cli/reeln/commands/render.py::_default_output). Matching by
+ * output filename catches re-staging the same source clip after it has
+ * already been rendered and moved into the publish queue. */
+export function isClipInCliQueue(clipPath: string): boolean {
+  const lastSlash = clipPath.lastIndexOf("/");
+  if (lastSlash < 0) return false;
+  const dir = clipPath.slice(0, lastSlash);
+  const filename = clipPath.slice(lastSlash + 1);
+  const dot = filename.lastIndexOf(".");
+  const stem = dot < 0 ? filename : filename.slice(0, dot);
+  const prefix = `${dir}/shorts/${stem}_`;
+  return cliItems.some((i) => i.output.startsWith(prefix) && i.output.endsWith(".mp4"));
+}
+
 export function addToStage(item: {
   gameDir: string;
   gameName: string;
@@ -72,6 +88,17 @@ export function addToStage(item: {
   playerNumbers?: string;
   noBranding?: boolean;
 }): void {
+  // Refuse silent duplicates: the CLI derives the output filename from
+  // the source clip stem, so a second render overwrites the first and
+  // gives the user a "ghost re-render" they didn't ask for. The UI shows
+  // a yellow warning when a duplicate is detected (see ClipReviewPanel).
+  if (isClipInStage(item.clipPath) || isClipInCliQueue(item.clipPath)) {
+    log.info(
+      "RenderQueue",
+      `Refused duplicate stage add: ${item.clipName} (already pending or rendered)`,
+    );
+    return;
+  }
   stageItems = [
     ...stageItems,
     {

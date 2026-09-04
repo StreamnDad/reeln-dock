@@ -173,6 +173,105 @@ describe("renderQueue store", () => {
       );
       expect(persistCalls).toHaveLength(1);
     });
+
+    it("refuses a second add when the same clipPath is already pending", async () => {
+      mockInvoke.mockResolvedValue("[]");
+      const store = await loadStore();
+      await store.initQueue();
+
+      const base = {
+        gameDir: "/g",
+        gameName: "G",
+        eventId: "e",
+        clipPath: "/g/clips/dup.mkv",
+        clipName: "dup.mkv",
+        profiles: [{ profile_name: "default" }],
+        concatOutput: false,
+      };
+      store.addToStage(base);
+      store.addToStage(base);
+
+      expect(store.getStageItems()).toHaveLength(1);
+    });
+
+    it("refuses an add when the clip is already in the CLI publish queue", async () => {
+      const queueMod = await import("$lib/ipc/queue");
+      (queueMod.queueListAll as Mock).mockResolvedValueOnce([
+        {
+          id: "abc",
+          output: "/g/clips/shorts/dup_short.mp4",
+          game_dir: "/g",
+          status: "rendered",
+          queued_at: "2026-06-09T00:00:00Z",
+          duration_seconds: null,
+          file_size_bytes: null,
+          format: "vertical",
+          crop_mode: "pad",
+          render_profile: "default",
+          event_id: "",
+          home_team: "A",
+          away_team: "B",
+          date: "",
+          sport: "hockey",
+          level: "",
+        },
+      ]);
+      mockInvoke.mockResolvedValue("[]");
+      const store = await loadStore();
+      await store.initQueue();
+
+      store.addToStage({
+        gameDir: "/g",
+        gameName: "G",
+        eventId: "e",
+        clipPath: "/g/clips/dup.mkv",
+        clipName: "dup.mkv",
+        profiles: [{ profile_name: "default" }],
+        concatOutput: false,
+      });
+
+      expect(store.getStageItems()).toHaveLength(0);
+      expect(store.isClipInCliQueue("/g/clips/dup.mkv")).toBe(true);
+    });
+
+    it("allows the add when only an unrelated clip is in the CLI queue", async () => {
+      const queueMod = await import("$lib/ipc/queue");
+      (queueMod.queueListAll as Mock).mockResolvedValueOnce([
+        {
+          id: "abc",
+          output: "/g/clips/shorts/other_short.mp4",
+          game_dir: "/g",
+          status: "rendered",
+          queued_at: "2026-06-09T00:00:00Z",
+          duration_seconds: null,
+          file_size_bytes: null,
+          format: "vertical",
+          crop_mode: "pad",
+          render_profile: "default",
+          event_id: "",
+          home_team: "A",
+          away_team: "B",
+          date: "",
+          sport: "hockey",
+          level: "",
+        },
+      ]);
+      mockInvoke.mockResolvedValue("[]");
+      const store = await loadStore();
+      await store.initQueue();
+
+      store.addToStage({
+        gameDir: "/g",
+        gameName: "G",
+        eventId: "e",
+        clipPath: "/g/clips/dup.mkv",
+        clipName: "dup.mkv",
+        profiles: [{ profile_name: "default" }],
+        concatOutput: false,
+      });
+
+      expect(store.getStageItems()).toHaveLength(1);
+    });
   });
 
   describe("renderItem → renderShort", () => {
