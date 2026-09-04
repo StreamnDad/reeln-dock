@@ -409,6 +409,27 @@ fn derive_config_path_from_profile(effective_dir: &Path, profile: Option<&str>) 
     }
 }
 
+/// Pick the profile to publish under. Prefer the queue item's stored
+/// ``config_profile``; otherwise fall back to the dock setting
+/// ``rendering.default_plugin_profile``.
+///
+/// Why this matters: a queue item rendered without ``--profile`` (e.g. the
+/// stage panel ran before dock-settings finished loading and
+/// ``selectedPluginProfile`` was empty) lands with ``config_profile=""``.
+/// On publish, no profile means no ``--config`` derivation, the CLI
+/// inherits whatever ``REELN_CONFIG`` happens to be in the dock's launch
+/// env (often a dev/empty config from ``~/.zshenv``), and every upload
+/// flag reads as off — so the publish silently reports "disabled in
+/// plugin config" for every target.
+fn resolve_publish_profile(
+    stored: Option<String>,
+    default_from_settings: Option<String>,
+) -> Option<String> {
+    stored
+        .filter(|p| !p.is_empty())
+        .or_else(|| default_from_settings.filter(|p| !p.is_empty()))
+}
+
 /// Publish a queue item to target(s).
 #[tauri::command]
 pub async fn queue_publish(
@@ -428,24 +449,31 @@ pub async fn queue_publish(
     // against the wrong base directory — silently loading defaults
     // where every publish flag is off.
     let effective_dir = state.effective_config_dir();
+    // Read the dock-settings fallback profile up-front so the
+    // spawn_blocking closure stays lock-free. See ``resolve_publish_profile``
+    // for why this fallback matters.
+    let default_profile = state
+        .dock_settings
+        .lock()
+        .ok()
+        .and_then(|s| s.rendering.default_plugin_profile.clone());
 
     let app_clone = app.clone();
     tokio::task::spawn_blocking(move || {
         // Read the item's stored config_profile for --profile
-        let stored_profile = read_queue_file(Path::new(&game_dir))
-            .ok()
-            .and_then(|q| {
-                q.items
-                    .iter()
-                    .find(|i| i.id == item_id || i.id.starts_with(&item_id))
-                    .map(|i| i.config_profile.clone())
-            })
-            .filter(|p| !p.is_empty());
+        let stored_profile = read_queue_file(Path::new(&game_dir)).ok().and_then(|q| {
+            q.items
+                .iter()
+                .find(|i| i.id == item_id || i.id.starts_with(&item_id))
+                .map(|i| i.config_profile.clone())
+        });
 
-        // Derive a concrete ``--config`` path from the stored profile when
+        let resolved_profile = resolve_publish_profile(stored_profile, default_profile);
+
+        // Derive a concrete ``--config`` path from the resolved profile when
         // the frontend didn't pass one. See ``derive_config_path_from_profile``.
         let derived_config = if config_path.is_none() {
-            derive_config_path_from_profile(&effective_dir, stored_profile.as_deref())
+            derive_config_path_from_profile(&effective_dir, resolved_profile.as_deref())
         } else {
             None
         };
@@ -470,7 +498,7 @@ pub async fn queue_publish(
             &cli_path,
             &args,
             effective_config.as_deref(),
-            stored_profile.as_deref(),
+            resolved_profile.as_deref(),
         )?;
         crate::dock_log::log_cli_output(&app_clone, "Queue", &output);
         check_cli_output(&output)?;
@@ -501,6 +529,11 @@ pub async fn queue_publish_all(
     // didn't pass one, so the subprocess loads the right plugin
     // settings regardless of how the dock was launched.
     let effective_dir = state.effective_config_dir();
+    let default_profile = state
+        .dock_settings
+        .lock()
+        .ok()
+        .and_then(|s| s.rendering.default_plugin_profile.clone());
 
     let app_clone = app.clone();
     tokio::task::spawn_blocking(move || {
@@ -508,16 +541,15 @@ pub async fn queue_publish_all(
         args.push("--game-dir");
         args.push(&game_dir);
 
+        let stored_profile = read_queue_file(Path::new(&game_dir)).ok().and_then(|q| {
+            q.items
+                .iter()
+                .find(|i| !i.config_profile.is_empty())
+                .map(|i| i.config_profile.clone())
+        });
+        let resolved_profile = resolve_publish_profile(stored_profile, default_profile);
         let derived_config = if config_path.is_none() {
-            read_queue_file(Path::new(&game_dir))
-                .ok()
-                .and_then(|q| {
-                    q.items
-                        .iter()
-                        .find(|i| !i.config_profile.is_empty())
-                        .map(|i| i.config_profile.clone())
-                })
-                .and_then(|profile| derive_config_path_from_profile(&effective_dir, Some(&profile)))
+            derive_config_path_from_profile(&effective_dir, resolved_profile.as_deref())
         } else {
             None
         };
@@ -527,7 +559,12 @@ pub async fn queue_publish_all(
             .chain(args.iter().copied())
             .collect();
         crate::dock_log::log_cli_command(&app_clone, "Queue", &cli_path, &log_args);
-        let output = run_queue_cli(&cli_path, &args, effective_config.as_deref())?;
+        let output = run_queue_cli_with_profile(
+            &cli_path,
+            &args,
+            effective_config.as_deref(),
+            resolved_profile.as_deref(),
+        )?;
         crate::dock_log::log_cli_output(&app_clone, "Queue", &output);
         check_cli_output(&output)?;
 
@@ -948,6 +985,54 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         assert!(super::derive_config_path_from_profile(dir.path(), None).is_none());
         assert!(super::derive_config_path_from_profile(dir.path(), Some("")).is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // resolve_publish_profile — fallback when queue item has no profile
+    // -----------------------------------------------------------------------
+
+    /// Non-empty stored profile wins regardless of the dock-settings default.
+    /// The queue item is the source of truth for what config was used at
+    /// render time — we must not silently swap it out for a different one.
+    #[test]
+    fn test_resolve_publish_profile_prefers_stored() {
+        let resolved =
+            super::resolve_publish_profile(Some("production".to_string()), Some("dev".to_string()));
+        assert_eq!(resolved.as_deref(), Some("production"));
+    }
+
+    /// Empty stored profile falls back to the dock setting. This is the
+    /// bug-fix path: a stage item rendered before ``selectedPluginProfile``
+    /// loaded (or with a frontend race) lands in the queue with
+    /// ``config_profile=""``. Without this fallback, publish loads whatever
+    /// ``REELN_CONFIG`` the dock process happened to inherit — typically
+    /// a dev/empty config where every upload flag is off — and every
+    /// target silently reports "disabled in plugin config".
+    #[test]
+    fn test_resolve_publish_profile_falls_back_to_dock_default_when_empty() {
+        let resolved =
+            super::resolve_publish_profile(Some("".to_string()), Some("production".to_string()));
+        assert_eq!(resolved.as_deref(), Some("production"));
+    }
+
+    /// Missing stored profile (queue file unreadable or item not found)
+    /// also falls back to the dock setting.
+    #[test]
+    fn test_resolve_publish_profile_falls_back_when_none() {
+        let resolved = super::resolve_publish_profile(None, Some("production".to_string()));
+        assert_eq!(resolved.as_deref(), Some("production"));
+    }
+
+    /// Both empty → None (preserves CLI's own error reporting path for the
+    /// genuinely-unconfigured case).
+    #[test]
+    fn test_resolve_publish_profile_returns_none_when_both_empty() {
+        assert!(super::resolve_publish_profile(None, None).is_none());
+        assert!(super::resolve_publish_profile(Some("".to_string()), None).is_none());
+        assert!(super::resolve_publish_profile(None, Some("".to_string())).is_none());
+        assert!(
+            super::resolve_publish_profile(Some("".to_string()), Some("".to_string())).is_none()
+        );
     }
 
     #[cfg(unix)]
