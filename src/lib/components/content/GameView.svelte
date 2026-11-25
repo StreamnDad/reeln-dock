@@ -1,13 +1,16 @@
 <script lang="ts">
   import { convertFileSrc } from "@tauri-apps/api/core";
+  import { open } from "@tauri-apps/plugin-dialog";
   import type { GameSummary, GameEvent, GameInfo, RenderEntry } from "$lib/types/game";
   import type { EventTypeEntry } from "$lib/types/config";
-  import { updateGameEvent, updateGameInfo, setGameLivestream, removeGameLivestream, bulkUpdateEventType, getEventTypes, processSegment, mergeHighlights, finishGame, pruneRenders, executePluginHook, discoverGameImage } from "$lib/ipc/games";
+  import { updateGameEvent, updateGameInfo, setGameLivestream, removeGameLivestream, bulkUpdateEventType, getEventTypes, processSegment, mergeHighlights, finishGame, pruneRenders, executePluginHook, discoverGameImage, getGameSponsorLogo, setGameSponsorLogo } from "$lib/ipc/games";
   import { log } from "$lib/stores/log.svelte";
-  import { lookupTeam } from "$lib/stores/teams.svelte";
+  import { listTeamProfiles } from "$lib/ipc/teams";
   import { getDockSettings } from "$lib/stores/config.svelte";
   import * as uiPrefs from "$lib/stores/uiPrefs.svelte";
   import TeamLogo from "$lib/components/TeamLogo.svelte";
+  import GameSponsorLogo from "$lib/components/GameSponsorLogo.svelte";
+  import { getCompositedGameImage, getSponsoredExistingGameImage } from "$lib/gameImage";
   import { help } from "$lib/help";
   import HelpLink from "$lib/components/HelpLink.svelte";
   import RenderPlaybackModal from "./RenderPlaybackModal.svelte";
@@ -32,6 +35,10 @@
   let { game, activeEventId = null, onBack, onSelectEvent, onUpdateGame, onDeleteGame }: Props = $props();
   let info = $derived(game.state.game_info);
   let gs = $derived(game.state);
+  let sponsorLogoPath = $state<string | null>(null);
+  let sponsorLogoLoading = $state(true);
+  let sponsorLogoSaving = $state(false);
+  let sponsorLogoError = $state("");
 
   // Segment filter — persisted across navigation
   let selectedSegment = $derived(uiPrefs.getSelectedSegment());
@@ -285,25 +292,110 @@
     }
   }
 
+  async function changeSponsorLogo(path: string | null) {
+    const dir = game.dir_path;
+    sponsorLogoSaving = true;
+    try {
+      const savedPath = await setGameSponsorLogo(dir, path);
+      if (game.dir_path === dir) {
+        sponsorLogoPath = savedPath;
+        sponsorLogoError = "";
+      }
+    } finally {
+      sponsorLogoSaving = false;
+    }
+  }
+
+  async function setGameImage(dir: string, imagePath: string) {
+    const newState = await updateGameInfo(dir, "thumbnail", imagePath);
+    onUpdateGame?.(dir, (g) => ({ ...g, state: newState }));
+    if (game.dir_path === dir) {
+      unavailableImagePaths = [];
+      discoveredImage = imagePath;
+      gameImageRevision = Date.now();
+    }
+  }
+
+  async function handleChooseExistingImage() {
+    if (actionLoading || sponsorLogoSaving || sponsorLogoLoading) return;
+    const dir = game.dir_path;
+    const addSponsor = !!sponsorLogoPath;
+    actionLoading = addSponsor ? "sponsor-image" : "restore-image";
+    actionError = "";
+    try {
+      const source = await open({
+        title: "Choose the original game graphic",
+        filters: [{ name: "Game images", extensions: ["png", "jpg", "jpeg", "webp"] }],
+        multiple: false,
+      });
+      if (typeof source !== "string" || game.dir_path !== dir) return;
+
+      let imagePath = source;
+      if (addSponsor) {
+        const configPath = getDockSettings().reeln_config_path ?? undefined;
+        const result = await executePluginHook("on_game_init", {
+          game_dir: dir,
+          existing_game_image_path: source,
+          regenerate_image_only: true,
+        }, {}, configPath);
+        if (!result.success) throw new Error(result.errors.join("\n") || "Hook execution failed");
+        const sponsoredPath = getSponsoredExistingGameImage(result.shared);
+        if (!sponsoredPath) {
+          for (const message of result.logs) log.warn("GameView", message);
+          const imageError = result.shared.game_image_error;
+          throw new Error((typeof imageError === "string" && imageError) ||
+            "Enable OpenAI plugin 0.13.0 or later to add a sponsor to an existing image.");
+        }
+        imagePath = sponsoredPath;
+      } else if (source === info.thumbnail && source.split(/[/\\]/).at(-1) === "sponsored-game-image.png") {
+        throw new Error("Choose the original game graphic without the sponsor footer.");
+      }
+
+      await setGameImage(dir, imagePath);
+      log.info("GameView", `Saved game image: ${imagePath}`);
+    } catch (err) {
+      if (game.dir_path === dir) actionError = err instanceof Error ? err.message : String(err);
+      log.error("GameView", `Failed to use existing game image: ${err}`);
+    } finally {
+      actionLoading = null;
+    }
+  }
+
   async function handleRegenerateImage() {
+    if (actionLoading || sponsorLogoSaving || sponsorLogoLoading) return;
+    const dir = game.dir_path;
+    const gameInfo = info;
     actionLoading = "regen-image";
     actionError = "";
     try {
-      const homeProfile = lookupTeam(info.home_team);
-      const awayProfile = lookupTeam(info.away_team);
+      const hasSponsor = !!await getGameSponsorLogo(dir);
+      // Read the game's level from disk so a recently fixed logo is picked up,
+      // even when another level has a team with the same name.
+      const profiles = await listTeamProfiles(gameInfo.level);
+      const homeProfile = profiles.find((p) => p.team_name.toLowerCase() === gameInfo.home_team.toLowerCase());
+      const awayProfile = profiles.find((p) => p.team_name.toLowerCase() === gameInfo.away_team.toLowerCase());
+      const missingLogos = [
+        { name: gameInfo.home_team, profile: homeProfile },
+        { name: gameInfo.away_team, profile: awayProfile },
+      ].filter(({ profile }) => !profile?.logo_path?.trim()).map(({ name }) => name);
+      if (missingLogos.length > 0) {
+        throw new Error(`Add a team logo in Teams for ${missingLogos.join(", ")} (${gameInfo.level}), then regenerate the image.`);
+      }
 
       const contextData: Record<string, unknown> = {
-        game_dir: game.dir_path,
-        game_info: {
-          sport: info.sport,
-          home_team: info.home_team,
-          away_team: info.away_team,
-          date: info.date,
-          venue: info.venue,
-          game_time: info.game_time,
-          level: info.level,
-          tournament: info.tournament,
-          description: info.description,
+        game_dir: dir,
+        // Keep the image metadata private to the renderer so game-init
+        // plugins such as the live scoreboard leave their state alone.
+        game_image_info: {
+          sport: gameInfo.sport,
+          home_team: gameInfo.home_team,
+          away_team: gameInfo.away_team,
+          date: gameInfo.date,
+          venue: gameInfo.venue,
+          game_time: gameInfo.game_time,
+          level: gameInfo.level,
+          tournament: gameInfo.tournament,
+          description: gameInfo.description,
         },
         regenerate_image_only: true,
         ...(homeProfile ? { home_profile: homeProfile } : {}),
@@ -313,22 +405,18 @@
       const configPath = getDockSettings().reeln_config_path ?? undefined;
       const result = await executePluginHook("on_game_init", contextData, {}, configPath);
 
-      if (result.success) {
-        // Extract image path from shared context and persist to game state
-        const gameImage = result.shared?.game_image as { image_path?: string } | undefined;
-        if (gameImage?.image_path) {
-          const newState = await updateGameInfo(game.dir_path, "thumbnail", gameImage.image_path);
-          onUpdateGame?.(game.dir_path, (g) => ({ ...g, state: newState }));
-          log.info("GameView", `Game image regenerated: ${gameImage.image_path}`);
-        } else {
-          log.info("GameView", "Game image regenerated (no path returned)");
-        }
-      } else {
-        actionError = result.errors.join("\n") || "Hook execution failed";
-        log.error("GameView", `Regenerate image failed: ${actionError}`);
+      if (!result.success) throw new Error(result.errors.join("\n") || "Hook execution failed");
+      const imagePath = getCompositedGameImage(result.shared, hasSponsor);
+      if (!imagePath) {
+        for (const message of result.logs) log.warn("GameView", message);
+        const imageError = result.shared.game_image_error;
+        throw new Error((typeof imageError === "string" && imageError) ||
+          "No game image was generated. Enable OpenAI plugin 0.13.0 or later and check its image settings.");
       }
+      await setGameImage(dir, imagePath);
+      log.info("GameView", `Game image regenerated: ${imagePath}`);
     } catch (err) {
-      actionError = String(err);
+      if (game.dir_path === dir) actionError = err instanceof Error ? err.message : String(err);
       log.error("GameView", `Failed to regenerate image: ${err}`);
     } finally {
       actionLoading = null;
@@ -349,7 +437,7 @@
     { key: "game_number", label: "Game Number", display: (v) => String(v) },
     { key: "period_length", label: "Period Length", display: (v) => v ? `${v} min` : "-" },
     { key: "venue", label: "Venue" },
-    { key: "description", label: "Description" },
+    { key: "description", label: "Context" },
     { key: "thumbnail", label: "Thumbnail" },
     { key: "home_slug", label: "Home Slug" },
     { key: "away_slug", label: "Away Slug" },
@@ -430,31 +518,45 @@
   }
 
   // Thumbnail / discovered image
-  let thumbnailError = $state(false);
+  let unavailableImagePaths = $state<string[]>([]);
   let discoveredImage = $state<string | null>(null);
-  let prevGameDir = "";
+  let gameImageRevision = $state(0);
 
-  // The effective image: explicit thumbnail > discovered image
   let gameImagePath = $derived(
-    (info.thumbnail && !thumbnailError) ? info.thumbnail : discoveredImage
+    [info.thumbnail, discoveredImage].find((path) => path && !unavailableImagePaths.includes(path)) ?? null
   );
   let gameImageSrc = $derived(
-    gameImagePath ? convertFileSrc(gameImagePath) : ""
+    gameImagePath ? `${convertFileSrc(gameImagePath)}?v=${gameImageRevision}` : ""
   );
+
+  function handleGameImageError(event: Event) {
+    const image = event.currentTarget as HTMLImageElement;
+    if (gameImagePath && image.getAttribute("src") === gameImageSrc) {
+      unavailableImagePaths = [...unavailableImagePaths, gameImagePath];
+    }
+  }
 
   // Discover image on game change
   $effect(() => {
     const dir = game.dir_path;
-    if (dir !== prevGameDir) {
-      prevGameDir = dir;
-      thumbnailError = false;
-      discoveredImage = null;
-      if (!info.thumbnail) {
-        discoverGameImage(dir).then((path) => {
-          if (path) discoveredImage = path;
-        }).catch(() => {});
-      }
-    }
+    let canceled = false;
+    unavailableImagePaths = [];
+    discoveredImage = null;
+    gameImageRevision = Date.now();
+    sponsorLogoPath = null;
+    sponsorLogoError = "";
+    sponsorLogoLoading = true;
+    discoverGameImage(dir, false).then((path) => {
+      if (!canceled) discoveredImage = path;
+    }).catch(() => {});
+    getGameSponsorLogo(dir).then((path) => {
+      if (!canceled) sponsorLogoPath = path;
+    }).catch((err) => {
+      if (!canceled) sponsorLogoError = String(err);
+    }).finally(() => {
+      if (!canceled) sponsorLogoLoading = false;
+    });
+    return () => { canceled = true; };
   });
 
   // Right panel toggle
@@ -471,7 +573,7 @@
         src={gameImageSrc}
         alt=""
         class="absolute inset-0 w-full h-full object-cover opacity-25 blur-sm"
-        onerror={() => { thumbnailError = true; }}
+        onerror={handleGameImageError}
       />
     {/if}
     <div class="relative z-10 px-4 py-4 space-y-3 {gameImageSrc ? 'bg-bg/60' : 'bg-surface/80'}">
@@ -507,7 +609,7 @@
         <div class="flex items-center gap-2 shrink-0">
           <button
             class="px-3 py-1.5 text-xs font-medium text-text-muted hover:text-secondary border border-border hover:border-secondary/30 rounded-lg transition-colors disabled:opacity-50"
-            disabled={actionLoading === "regen-image"}
+            disabled={!!actionLoading || sponsorLogoLoading || sponsorLogoSaving}
             onclick={handleRegenerateImage}
           >
             {actionLoading === "regen-image" ? "Generating..." : "Regenerate Image"}
@@ -529,15 +631,16 @@
   <!-- Fixed controls: actions + filters -->
   <div class="shrink-0 space-y-3 pb-3">
 
+    {#if actionError}
+      <div class="px-3 py-2 bg-red-900/30 border border-red-800 rounded-lg text-sm text-red-300" role="alert">
+        {actionError}
+      </div>
+    {/if}
+
     <!-- Game Actions -->
     {#if !gs.finished}
       <div>
         <h3 class="text-sm font-semibold uppercase tracking-wider text-text-muted mb-2">Actions</h3>
-        {#if actionError}
-          <div class="mb-2 px-3 py-2 bg-red-900/30 border border-red-800 rounded-lg text-sm text-red-300">
-            {actionError}
-          </div>
-        {/if}
         <div class="flex gap-2 flex-wrap">
           {#if !gs.finished}
             {@const maxProcessed = gs.segments_processed.length > 0 ? Math.max(...gs.segments_processed) : 0}
@@ -941,17 +1044,44 @@
               src={gameImageSrc}
               alt="Game thumbnail"
               class="w-full object-cover"
-              onerror={() => { thumbnailError = true; }}
+              onerror={handleGameImageError}
             />
           </div>
         {/if}
+
+        <div class="bg-surface rounded-lg border border-border p-3 space-y-2">
+          {#key game.dir_path}
+            <GameSponsorLogo
+              logoPath={sponsorLogoPath}
+              disabled={sponsorLogoLoading || !!actionLoading}
+              onChange={changeSponsorLogo}
+            />
+          {/key}
+          {#if sponsorLogoError}
+            <p class="text-xs text-red-300" role="alert">{sponsorLogoError}</p>
+          {:else if !sponsorLogoLoading}
+            <button
+              type="button"
+              class="px-2 py-1 text-xs border border-border rounded text-text hover:border-secondary disabled:opacity-50"
+              disabled={!!actionLoading || sponsorLogoSaving}
+              onclick={handleChooseExistingImage}
+            >{actionLoading === "sponsor-image" ? "Adding sponsor…" :
+                actionLoading === "restore-image" ? "Restoring image…" :
+                sponsorLogoPath ? "Add sponsor to existing image…" : "Use original game image…"}</button>
+            <p class="text-xs text-text-muted">
+              {sponsorLogoPath
+                ? "Choose an original graphic to keep its artwork, or regenerate the game image."
+                : "Choose the original graphic to use it without a sponsor footer or regeneration."}
+            </p>
+          {/if}
+        </div>
 
         <!-- Quick Info -->
         <div class="bg-surface rounded-lg border border-border p-3 space-y-2 text-sm">
           <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted">Details</h3>
           {#each INFO_FIELDS as { key, label, display }}
             {@const val = info[key]}
-            {#if val || editingInfoField === key}
+            {#if val || key === "description" || editingInfoField === key}
               <div class="flex justify-between gap-2">
                 <span class="text-text-muted shrink-0">{label}</span>
                 {#if editingInfoField === key}
@@ -959,11 +1089,18 @@
                   <input
                     type="text"
                     bind:value={editInfoValue}
-                    class="w-24 px-1 py-0.5 bg-bg border border-secondary rounded text-xs text-text text-right focus:outline-none"
+                    class="{key === 'description' ? 'min-w-0 flex-1' : 'w-24'} px-1 py-0.5 bg-bg border border-secondary rounded text-xs text-text text-right focus:outline-none"
                     onkeydown={(e) => { if (e.key === "Enter") commitInfoEdit(); if (e.key === "Escape") cancelInfoEdit(); }}
                     onblur={commitInfoEdit}
                     autofocus
                   />
+                {:else if key === "description"}
+                  <button
+                    type="button"
+                    class="min-w-0 truncate text-right text-text hover:underline hover:decoration-dotted"
+                    title={val ? `Edit context: ${val}` : "Add context for game images and metadata"}
+                    onclick={() => startInfoEdit(key, val)}
+                  >{val || "Add context"}</button>
                 {:else}
                   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                   <span

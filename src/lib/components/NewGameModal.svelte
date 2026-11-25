@@ -1,8 +1,9 @@
 <script lang="ts">
+  import { convertFileSrc } from "@tauri-apps/api/core";
   import type { SportAlias } from "$lib/types/sport";
   import type { TeamProfile } from "$lib/types/team";
   import type { ConfigProfile, PluginDetail } from "$lib/types/plugin";
-  import { initGame, listSports, executePluginHook } from "$lib/ipc/games";
+  import { initGame, listSports, executePluginHook, updateGameInfo, validateGameSponsorLogo } from "$lib/ipc/games";
   import { listTeamLevels, listTeamProfiles, saveTeamProfile } from "$lib/ipc/teams";
   import { listConfigProfiles, listPluginsForProfile } from "$lib/ipc/plugins";
   import { getPromptTemplate, savePromptTemplate } from "$lib/ipc/prompts";
@@ -10,7 +11,9 @@
   import type { GameSummary } from "$lib/types/game";
   import { log } from "$lib/stores/log.svelte";
   import { lookupTeam } from "$lib/stores/teams.svelte";
+  import { getCompositedGameImage } from "$lib/gameImage";
   import { help } from "$lib/help";
+  import GameSponsorLogo from "$lib/components/GameSponsorLogo.svelte";
   import TeamLogo from "$lib/components/TeamLogo.svelte";
   import HelpLink from "$lib/components/HelpLink.svelte";
 
@@ -71,6 +74,8 @@
   let addingNewTournament = $state(false);
   let newTournamentName = $state("");
   let gameDescription = $state("");
+  let sponsorLogoPath = $state<string | null>(null);
+  let checkingSponsorLogo = $state(false);
 
   // AI preview state
   interface PromptState {
@@ -80,7 +85,7 @@
     expanded: boolean;
     editing: boolean;
     editText: string;          // Current edit buffer (raw template text)
-    overridden: boolean;       // True if user has a temp override for this run
+    overrideText: string | null;
   }
   let prompts = $state<PromptState[]>([]);
   let promptsLoading = $state(false);
@@ -151,6 +156,13 @@
   let enabledPluginNames = $derived(
     profilePlugins.filter((p) => p.enabled).map((p) => p.name),
   );
+  let imageGenerationEnabled = $derived(profilePlugins.some((p) =>
+    p.name === "openai" && p.enabled && p.settings.game_image_enabled === true,
+  ));
+  let teamsMissingLogos = $derived(
+    [homeTeam, awayTeam].filter((name) => name.trim() &&
+      !teamsForLevel.find((t) => t.team_name === name.trim())?.logo_path?.trim()),
+  );
 
   // Load team profiles when level changes
   $effect(() => {
@@ -219,11 +231,21 @@
     }
   }
 
+  async function selectSponsorLogo(path: string | null) {
+    checkingSponsorLogo = true;
+    try {
+      if (path) await validateGameSponsorLogo(path);
+      sponsorLogoPath = path;
+    } finally {
+      checkingSponsorLogo = false;
+    }
+  }
+
   function canAdvanceFrom(s: Step): boolean {
     switch (s) {
       case "level": return !!level && !!sport;
       case "teams": return !!homeTeam && !!awayTeam;
-      case "details": return !!date;
+      case "details": return !!date && !checkingSponsorLogo;
       case "ai": return true;
       default: return false;
     }
@@ -257,24 +279,23 @@
   }
 
   function getPromptVars(): Record<string, string> {
-    // Mirror the openai plugin's _build_prompt_variables() so the preview
-    // matches what the plugin actually substitutes at runtime.
+    // Use the same placeholder names as the OpenAI prompt templates.
     const homeProfile = teamsForLevel.find((t) => t.team_name === homeTeam.trim());
     const awayProfile = teamsForLevel.find((t) => t.team_name === awayTeam.trim());
     return {
-      home_team: homeTeam,
-      away_team: awayTeam,
+      home_team: homeTeam.trim(),
+      away_team: awayTeam.trim(),
       home_colors: pyColorsRepr(homeProfile),
       away_colors: pyColorsRepr(awayProfile),
       game_level: homeProfile?.level ?? "",
       date,
       game_date: date,
       sport,
-      venue,
-      rink: venue,
+      venue: venue.trim(),
+      rink: venue.trim(),
       game_time: formatGameTime(),
-      level,
-      tournament,
+      level: level.trim(),
+      tournament: tournament.trim(),
       description: gameDescription.trim(),
     };
   }
@@ -310,15 +331,16 @@
     for (const name of relevant) {
       try {
         const tpl = await getPromptTemplate(name);
-        const rendered = substituteVars(tpl.content, vars);
+        const overrideText = prompts.find((p) => p.name === name)?.overrideText ?? null;
+        const editText = overrideText ?? tpl.content;
         loaded.push({
           name,
           rawTemplate: tpl.content,
-          rendered,
+          rendered: substituteVars(editText, vars),
           expanded: false,
           editing: false,
-          editText: tpl.content,
-          overridden: false,
+          editText,
+          overrideText,
         });
       } catch {
         // Template not found — skip
@@ -336,7 +358,7 @@
 
   function startEditingPrompt(name: string) {
     prompts = prompts.map((p) =>
-      p.name === name ? { ...p, editing: true, editText: p.overridden ? p.editText : p.rawTemplate } : p,
+      p.name === name ? { ...p, editing: true, editText: p.overrideText ?? p.rawTemplate } : p,
     );
   }
 
@@ -349,9 +371,9 @@
   function applyPromptThisRun(name: string) {
     const vars = getPromptVars();
     prompts = prompts.map((p) => {
-      if (p.name !== name) return p;
-      const rendered = substituteVars(p.editText, vars);
-      return { ...p, rendered, overridden: true, editing: false };
+      if (p.name !== name || !p.editText.trim()) return p;
+      const overrideText = p.editText.trim();
+      return { ...p, rendered: substituteVars(overrideText, vars), overrideText, editing: false };
     });
   }
 
@@ -364,7 +386,7 @@
       const rendered = substituteVars(prompt.editText, vars);
       prompts = prompts.map((p) => {
         if (p.name !== name) return p;
-        return { ...p, rawTemplate: prompt.editText, rendered, overridden: false, editing: false };
+        return { ...p, rawTemplate: prompt.editText, rendered, overrideText: null, editing: false };
       });
       log.info("NewGame", `Saved template: ${name}`);
     } catch (err) {
@@ -414,6 +436,7 @@
             level: level.trim() || undefined,
             tournament: tournament.trim() || undefined,
             description: gameDescription.trim() || undefined,
+            sponsorLogoPath: sponsorLogoPath ?? undefined,
           });
           onGameCreated?.(result);
           createdDirPath = result.dir_path;
@@ -425,8 +448,11 @@
         }
         case "on_game_init":
         case "on_game_ready": {
-          const homeProfile = teamsForLevel.find((t) => t.team_name === homeTeam.trim());
-          const awayProfile = teamsForLevel.find((t) => t.team_name === awayTeam.trim());
+          // Pick up profile edits made after the wizard first loaded this level.
+          const profiles = await listTeamProfiles(level);
+          teamsForLevel = profiles;
+          const homeProfile = profiles.find((t) => t.team_name === homeTeam.trim());
+          const awayProfile = profiles.find((t) => t.team_name === awayTeam.trim());
 
           const contextData: Record<string, unknown> = {
             game_dir: createdDirPath,
@@ -445,6 +471,12 @@
             ...(awayProfile ? { away_profile: awayProfile } : {}),
           };
 
+          if (hook.id === "on_game_init") {
+            delete hookShared.game_image;
+            delete hookShared.game_image_error;
+            const gameImagePrompt = prompts.find((p) => p.name === "game_image")?.overrideText;
+            if (gameImagePrompt) contextData.game_image_prompt = gameImagePrompt;
+          }
           const result = await executePluginHook(
             hook.id,
             contextData,
@@ -452,7 +484,28 @@
             selectedConfigProfile?.path,
           );
 
-          // Accumulate shared state for next phase
+          let imageWarning = "";
+          let imageUrl: string | undefined;
+          if (hook.id === "on_game_init") {
+            try {
+              const imagePath = result.success
+                ? getCompositedGameImage(result.shared, !!sponsorLogoPath)
+                : null;
+              if (imagePath) {
+                imageUrl = `${convertFileSrc(imagePath)}?v=${Date.now()}`;
+                await updateGameInfo(createdDirPath, "thumbnail", imagePath);
+              } else if (typeof result.shared.game_image_error === "string") {
+                imageWarning = result.shared.game_image_error;
+              } else if (imageGenerationEnabled && sponsorLogoPath && result.success) {
+                imageWarning = "The sponsor is saved. Generate the game image to apply the logo.";
+              }
+            } catch (err) {
+              imageWarning = err instanceof Error ? err.message : String(err);
+            }
+            if (!imageUrl) delete result.shared.game_image;
+          }
+
+          // Pass the finished thumbnail to downstream plugins along with their metadata.
           hookShared = { ...hookShared, ...result.shared };
 
           const logSummary = result.logs
@@ -466,15 +519,13 @@
               result: logSummary || undefined,
               expanded: true,
             });
-          } else if (result.errors.length > 0) {
-            updateHook(hook.id, {
-              status: "done",
-              result: logSummary + "\n\nWarnings:\n" + result.errors.join("\n"),
-            });
           } else {
+            const warnings = [...result.errors, imageWarning].filter(Boolean).join("\n");
             updateHook(hook.id, {
               status: "done",
               result: logSummary || "Hooks completed",
+              error: warnings || undefined,
+              imageUrl,
             });
           }
           break;
@@ -1006,6 +1057,8 @@
             <p class="text-xs text-text-muted mt-1">Feeds into AI-generated titles, descriptions, and thumbnails as context.</p>
           </div>
 
+          <GameSponsorLogo logoPath={sponsorLogoPath} onChange={selectSponsorLogo} />
+
           <!-- Venue selector -->
           <div>
             <!-- svelte-ignore a11y_label_has_associated_control -->
@@ -1136,6 +1189,12 @@
           </div>
 
           <!-- Prompt templates — collapsed by default -->
+          {#if imageGenerationEnabled && teamsMissingLogos.length > 0}
+            <div class="p-3 rounded-lg border border-amber-700/50 bg-amber-900/20 text-sm text-amber-400" role="status">
+              Game image generation will be skipped. Missing team logo: {teamsMissingLogos.join(", ")}.
+              Add a logo in Teams, then use Regenerate Image on the game.
+            </div>
+          {/if}
           {#if promptsLoading}
             <p class="text-sm text-text-muted">Loading prompts...</p>
           {:else if prompts.length === 0}
@@ -1148,7 +1207,7 @@
                 Prompt Templates
               </h4>
               {#each prompts as prompt (prompt.name)}
-                <div class="rounded-lg border overflow-hidden {prompt.overridden ? 'border-amber-600' : 'border-border'}">
+                <div class="rounded-lg border overflow-hidden {prompt.overrideText ? 'border-amber-600' : 'border-border'}">
                   <!-- Collapsed header — always visible -->
                   <button
                     class="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-bg/50 transition-colors"
@@ -1158,7 +1217,7 @@
                     <span class="text-xs font-semibold uppercase tracking-wider text-text-muted">
                       {prompt.name.replace(/_/g, " ")}
                     </span>
-                    {#if prompt.overridden}
+                    {#if prompt.overrideText}
                       <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-900/40 text-amber-400 border border-amber-700/50">this run</span>
                     {/if}
                     <!-- First line preview when collapsed -->
@@ -1170,6 +1229,9 @@
                   <!-- Expanded content -->
                   {#if prompt.expanded}
                     <div class="border-t border-border">
+                      {#if prompt.name === "game_image"}
+                        <p class="px-3 pt-2 pb-1 text-xs text-text-muted">The prompt directs the artwork. The official logos and game details are added after generation.</p>
+                      {/if}
                       {#if prompt.editing}
                         <!-- Edit mode -->
                         <div class="p-3 space-y-2">
@@ -1190,8 +1252,9 @@
                           </p>
                           <div class="flex items-center gap-2">
                             <button
-                              class="px-3 py-1.5 text-xs rounded-lg border border-amber-700 text-amber-400 hover:bg-amber-900/30 transition-colors"
+                              class="px-3 py-1.5 text-xs rounded-lg border border-amber-700 text-amber-400 hover:bg-amber-900/30 transition-colors disabled:opacity-50"
                               title="Use this modified prompt for this game only. The template file is not changed."
+                              disabled={!prompt.editText.trim()}
                               onclick={() => applyPromptThisRun(prompt.name)}
                             >
                               This run only
@@ -1221,7 +1284,7 @@
                           >
                             Edit template
                           </button>
-                          {#if prompt.overridden}
+                          {#if prompt.overrideText}
                             <span class="text-[10px] text-amber-400">Modified for this run</span>
                           {/if}
                         </div>

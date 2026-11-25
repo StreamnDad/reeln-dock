@@ -101,6 +101,9 @@ fn main() {
             commands::games::set_game_livestream,
             commands::games::remove_game_livestream,
             commands::games::discover_game_image,
+            commands::games::validate_game_sponsor_logo,
+            commands::games::get_game_sponsor_logo,
+            commands::games::set_game_sponsor_logo,
             // Games (execution)
             commands::games::init_game,
             commands::games::process_segment,

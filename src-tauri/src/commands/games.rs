@@ -1,10 +1,11 @@
 use std::path::{Path, PathBuf};
 
 use reeln_sport::default_event_type_entries;
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, State};
 
 use crate::models::GameSummary;
-use crate::orchestration::{game_ops, progress::ProgressReporter};
+use crate::orchestration::{game_ops, game_sponsor::GameSponsorLogo, progress::ProgressReporter};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -108,18 +109,48 @@ pub fn remove_game_livestream(
     Ok(state)
 }
 
-/// Discover a game image by convention: `{date}_{home_slug}_vs_{away_slug}.png`
-/// in the configured game_image_output_dir.
+#[tauri::command]
+pub fn validate_game_sponsor_logo(source_path: String) -> Result<(), String> {
+    GameSponsorLogo::read(Path::new(&source_path)).map(|_| ())
+}
+
+#[tauri::command]
+pub fn get_game_sponsor_logo(game_dir: String) -> Result<Option<String>, String> {
+    let path = Path::new(&game_dir);
+    reeln_state::load_game_state(path).map_err(|e| format!("Cannot open game directory: {e}"))?;
+    Ok(GameSponsorLogo::find(path)?.map(|asset| asset.display().to_string()))
+}
+
+#[tauri::command]
+pub fn set_game_sponsor_logo(
+    game_dir: String,
+    source_path: Option<String>,
+) -> Result<Option<String>, String> {
+    let path = Path::new(&game_dir);
+    reeln_state::load_game_state(path).map_err(|e| format!("Cannot open game directory: {e}"))?;
+    match source_path {
+        Some(source) => {
+            let logo = GameSponsorLogo::read(Path::new(&source))?;
+            Ok(Some(logo.save(path)?.display().to_string()))
+        }
+        None => {
+            GameSponsorLogo::remove(path)?;
+            Ok(None)
+        }
+    }
+}
+
+/// Discover an explicit thumbnail, the generated per-game image, or a legacy image.
 #[tauri::command]
 pub fn discover_game_image(
     state: State<'_, AppState>,
     game_dir: String,
+    include_saved_thumbnail: Option<bool>,
 ) -> Result<Option<String>, String> {
     let path = Path::new(&game_dir);
     let gs = reeln_state::load_game_state(path).map_err(|e| e.to_string())?;
 
-    // If thumbnail is already set and exists, return it
-    if !gs.game_info.thumbnail.is_empty() {
+    if include_saved_thumbnail.unwrap_or(true) && !gs.game_info.thumbnail.is_empty() {
         let thumb = Path::new(&gs.game_info.thumbnail);
         if thumb.exists() {
             return Ok(Some(gs.game_info.thumbnail));
@@ -146,20 +177,69 @@ pub fn discover_game_image(
         return Ok(None);
     }
 
-    let home_slug = if gs.game_info.home_slug.is_empty() {
-        slugify(&gs.game_info.home_team)
+    let output_dir = Path::new(output_dir);
+    let expanded_output_dir = output_dir
+        .strip_prefix("~")
+        .ok()
+        .and_then(|relative| std::env::home_dir().map(|home| home.join(relative)));
+    discover_generated_game_image(
+        path,
+        &gs.game_info,
+        expanded_output_dir.as_deref().unwrap_or(output_dir),
+    )
+}
+
+fn per_game_image_path(game_dir: &Path, output_dir: &Path) -> Result<PathBuf, String> {
+    let canonical = game_dir
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve game directory: {e}"))?;
+    let game_name = canonical.file_name().ok_or("Game directory has no name.")?;
+    let key = canonical
+        .to_str()
+        .ok_or("Game directory path must be UTF-8 to locate its generated image.")?;
+    #[cfg(windows)]
+    let key = if let Some(path) = key.strip_prefix("\\\\?\\UNC\\") {
+        format!("\\\\{path}")
     } else {
-        gs.game_info.home_slug.clone()
+        key.strip_prefix("\\\\?\\").unwrap_or(key).to_owned()
     };
-    let away_slug = if gs.game_info.away_slug.is_empty() {
-        slugify(&gs.game_info.away_team)
+    // Match the OpenAI plugin's path key to keep games from distinct roots apart.
+    let digest = format!("{:x}", Sha256::digest(key.as_bytes()));
+    Ok(output_dir
+        .join("games")
+        .join(game_name)
+        .join(&digest[..16])
+        .join("game-image.png"))
+}
+
+fn discover_generated_game_image(
+    game_dir: &Path,
+    info: &reeln_state::GameInfo,
+    output_dir: &Path,
+) -> Result<Option<String>, String> {
+    let candidate = per_game_image_path(game_dir, output_dir)?;
+    if candidate.is_file() {
+        return Ok(Some(candidate.display().to_string()));
+    }
+    // The old date/matchup filename can point to a different game in a doubleheader.
+    if GameSponsorLogo::find(game_dir)?.is_some() {
+        return Ok(None);
+    }
+
+    let home_slug = if info.home_slug.is_empty() {
+        slugify(&info.home_team)
     } else {
-        gs.game_info.away_slug.clone()
+        info.home_slug.clone()
     };
-    let date_slug = gs.game_info.date.replace('/', "-");
+    let away_slug = if info.away_slug.is_empty() {
+        slugify(&info.away_team)
+    } else {
+        info.away_slug.clone()
+    };
+    let date_slug = info.date.replace('/', "-");
 
     let filename = format!("{}_{}_vs_{}.png", date_slug, home_slug, away_slug);
-    let candidate = Path::new(output_dir).join(&filename);
+    let candidate = output_dir.join(filename);
     if candidate.exists() {
         return Ok(Some(candidate.display().to_string()));
     }
@@ -195,6 +275,7 @@ pub async fn init_game(
     tournament: Option<String>,
     period_length: Option<u32>,
     description: Option<String>,
+    sponsor_logo_path: Option<String>,
 ) -> Result<GameSummary, String> {
     let config = state
         .config
@@ -220,6 +301,7 @@ pub async fn init_game(
             tournament,
             period_length,
             description,
+            sponsor_logo_path,
         };
         game_ops::init_game(&config, &registry, params)
     })
@@ -949,6 +1031,34 @@ mod tests {
     fn get_game_state_errors_for_missing_dir() {
         let err = get_game_state("/tmp/nonexistent_reeln_game_xyz".into()).unwrap_err();
         assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn game_sponsor_prevents_legacy_image_fallback_for_the_same_matchup() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("matchup_g2");
+        let state = crate::test_utils::create_test_game(&game_dir);
+        let output_dir = tmp.path().join("images");
+        std::fs::create_dir(&output_dir).unwrap();
+        let legacy = output_dir.join("2026-04-03_team-a_vs_team-b.png");
+        std::fs::write(&legacy, b"legacy image").unwrap();
+        let find = || discover_generated_game_image(&game_dir, &state.game_info, &output_dir);
+
+        assert_eq!(find().unwrap().as_deref(), legacy.to_str());
+        std::fs::write(game_dir.join("game-sponsor.png"), b"sponsor logo").unwrap();
+        assert_eq!(find().unwrap(), None);
+
+        let other_game = tmp.path().join("other_root").join("matchup_g2");
+        crate::test_utils::create_test_game(&other_game);
+        let other_image = per_game_image_path(&other_game, &output_dir).unwrap();
+        std::fs::create_dir_all(other_image.parent().unwrap()).unwrap();
+        std::fs::write(other_image, b"other game's image").unwrap();
+        assert_eq!(find().unwrap(), None);
+
+        let generated = per_game_image_path(&game_dir, &output_dir).unwrap();
+        std::fs::create_dir_all(generated.parent().unwrap()).unwrap();
+        std::fs::write(&generated, b"per-game image").unwrap();
+        assert_eq!(find().unwrap().as_deref(), generated.to_str());
     }
 
     // ── set_game_tournament ────────────────────────────────────────────

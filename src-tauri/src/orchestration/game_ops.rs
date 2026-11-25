@@ -8,6 +8,7 @@ use reeln_state::{GameInfo, GameState};
 
 use crate::commands::teams::slugify;
 
+use super::game_sponsor::GameSponsorLogo;
 use super::progress::ProgressReporter;
 
 /// Parameters for creating a new game.
@@ -22,6 +23,7 @@ pub struct InitGameParams {
     pub tournament: Option<String>,
     pub period_length: Option<u32>,
     pub description: Option<String>,
+    pub sponsor_logo_path: Option<String>,
 }
 
 /// Initialize a new game: create directory, segment subdirs, and game.json.
@@ -39,6 +41,11 @@ pub fn init_game(
         .output_dir
         .as_ref()
         .ok_or_else(|| "output_dir not configured".to_string())?;
+    let sponsor_logo = params
+        .sponsor_logo_path
+        .as_deref()
+        .map(|source| GameSponsorLogo::read(Path::new(source)))
+        .transpose()?;
 
     let game_number = reeln_state::detect_next_game_number(
         output_dir,
@@ -72,11 +79,18 @@ pub fn init_game(
         tournament: params.tournament.unwrap_or_default(),
     };
 
+    let segments = make_segments(sport_alias, None).map_err(|e| e.to_string())?;
     let game_dir =
         reeln_state::create_game_directory(output_dir, &game_info).map_err(|e| e.to_string())?;
 
+    if let Some(logo) = sponsor_logo
+        && let Err(error) = logo.save(&game_dir)
+    {
+        let _ = std::fs::remove_dir(&game_dir);
+        return Err(error);
+    }
+
     // Create segment subdirectories
-    let segments = make_segments(sport_alias, None).map_err(|e| e.to_string())?;
     for seg in &segments {
         let seg_dir = game_dir.join(&seg.alias);
         std::fs::create_dir_all(&seg_dir).map_err(|e| e.to_string())?;
@@ -345,6 +359,7 @@ mod tests {
             tournament: None,
             period_length: None,
             description: None,
+            sponsor_logo_path: None,
         };
 
         let (_dir, state) = init_game(&config, &registry, params).unwrap();
