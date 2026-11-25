@@ -47,6 +47,7 @@ export async function initGame(params: {
   tournament?: string;
   periodLength?: number;
   description?: string;
+  sponsorLogoPath?: string;
 }): Promise<GameSummary> {
   return invoke<GameSummary>("init_game", params);
 }
@@ -184,8 +185,24 @@ export async function removeGameLivestream(
 
 export async function discoverGameImage(
   gameDir: string,
+  includeSavedThumbnail = true,
 ): Promise<string | null> {
-  return invoke<string | null>("discover_game_image", { gameDir });
+  return invoke<string | null>("discover_game_image", { gameDir, includeSavedThumbnail });
+}
+
+export async function validateGameSponsorLogo(sourcePath: string): Promise<void> {
+  return invoke<void>("validate_game_sponsor_logo", { sourcePath });
+}
+
+export async function getGameSponsorLogo(gameDir: string): Promise<string | null> {
+  return invoke<string | null>("get_game_sponsor_logo", { gameDir });
+}
+
+export async function setGameSponsorLogo(
+  gameDir: string,
+  sourcePath: string | null,
+): Promise<string | null> {
+  return invoke<string | null>("set_game_sponsor_logo", { gameDir, sourcePath });
 }
 
 export async function detectReelnCli(): Promise<string> {
